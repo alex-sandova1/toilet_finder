@@ -19,6 +19,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        manifestPlaceholders["API_KEY"] =
+            project.findProperty("MAPS_API_KEY") ?: "AIzaSyCU3SG7RETjnihdh7UeZmu7DndbE95PIwI"
     }
 
     buildTypes {
@@ -57,4 +60,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.maps.compose)
+    implementation(libs.play.services.maps)
+    implementation(libs.play.services.location)
+    implementation("com.google.android.libraries.places:places:5.2.0")
 }
