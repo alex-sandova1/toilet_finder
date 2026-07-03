@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "769881213094",
+    "project_id": "driver-assist-5ce9c",
+    "storage_bucket": "driver-assist-5ce9c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:769881213094:android:9446905156c1c382558c67",
+        "android_client_info": {
+          "package_name": "com.example.driverassist"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAeem5MdwFHCLVfy4Z8FpE26i2zJNewdmQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
