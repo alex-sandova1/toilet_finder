@@ -4,7 +4,6 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,157 +21,51 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.example.driverassist.data.RestroomFeedbackRepository
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.driverassist.model.RestroomAggregate
-import com.example.driverassist.model.RestroomReportInput
-import com.example.driverassist.model.RouteDetails
 import com.example.driverassist.model.dirtyLikelihoodPercent
 import com.example.driverassist.model.isClosedNow
 import com.example.driverassist.model.isDirtyNow
-import com.example.driverassist.network.fetchWalkingRoute
-import com.example.driverassist.util.findNearestBathroom
 import com.example.driverassist.util.resolveMapsApiKey
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
-import com.google.android.libraries.places.api.model.CircularBounds
-import com.google.android.libraries.places.api.model.Place
-import com.google.android.libraries.places.api.net.SearchByTextRequest
 import com.google.maps.android.compose.*
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-// Main map interface composable.
+@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
-fun MapScreen() {
+fun MapScreen(viewModel: MapViewModel = viewModel()) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val mapsApiKey = remember(context) { resolveMapsApiKey(context) }
-    val feedbackRepository = remember { RestroomFeedbackRepository() }
-    val restroomTypes = listOf("Public Restroom", "fast food restaurant restroom", "gas station restroom", "coffee shop restroom", "restaurant restroom", "bar restroom", "mall restroom")
-
-    var selectedTypeIndex by remember { mutableIntStateOf(0) }
-    val selectedType = restroomTypes[selectedTypeIndex]
-    var hasLocationPermission by remember { mutableStateOf(false) }
-    var userLocation by remember { mutableStateOf<LatLng?>(null) }
-    var bathroomLocations by remember { mutableStateOf<List<Place>>(emptyList()) }
     val cameraPositionState = rememberCameraPositionState()
     val placesClient = remember { Places.createClient(context) }
 
-    var showSearchThisArea by remember { mutableStateOf(false) }
-    var isSearching by remember { mutableStateOf(false) }
-    var isLoadingRoute by remember { mutableStateOf(false) }
-
-    var selectedPlaceName by remember { mutableStateOf<String?>(null) }
-    var selectedAggregate by remember { mutableStateOf<RestroomAggregate?>(null) }
-    var isLoadingFeedback by remember { mutableStateOf(false) }
-    var isSubmittingFeedback by remember { mutableStateOf(false) }
-    var feedbackErrorMessage by remember { mutableStateOf<String?>(null) }
-    var selectedCleanlinessRating by remember { mutableIntStateOf(3) }
-    var activeRoute by remember { mutableStateOf<RouteDetails?>(null) }
-    var activeRouteDestinationName by remember { mutableStateOf<String?>(null) }
-    var activeRouteDestinationLocation by remember { mutableStateOf<LatLng?>(null) }
-    var selectedPlace by remember { mutableStateOf<Place?>(null) }
-
-    fun clearSelectedPlace() {
-        selectedPlace = null
-        selectedPlaceName = null
-        selectedAggregate = null
-        isLoadingFeedback = false
-        isSubmittingFeedback = false
-        feedbackErrorMessage = null
-        selectedCleanlinessRating = 3
-    }
-
-    fun loadFeedbackForPlace(place: Place) {
-        selectedPlace = place
-        selectedPlaceName = place.displayName ?: "Restroom"
-        selectedAggregate = null
-        feedbackErrorMessage = null
-        selectedCleanlinessRating = 3
-        isLoadingFeedback = true
-
-        coroutineScope.launch {
-            runCatching {
-                feedbackRepository.fetchAggregate(place)
-            }.onSuccess { aggregate ->
-                selectedAggregate = aggregate
-            }.onFailure { error ->
-                feedbackErrorMessage = error.message ?: "Unable to load community status right now."
-            }
-            isLoadingFeedback = false
+    // Observe toast messages from ViewModel
+    LaunchedEffect(viewModel.toastMessage) {
+        viewModel.toastMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearToastMessage()
         }
-    }
-
-    fun submitFeedback(markedDirty: Boolean = false, markedClosed: Boolean = false, includeRating: Boolean = false) {
-        val place = selectedPlace ?: return
-        isSubmittingFeedback = true
-        feedbackErrorMessage = null
-
-        coroutineScope.launch {
-            runCatching {
-                feedbackRepository.submitReport(
-                    place = place,
-                    report = RestroomReportInput(
-                        cleanlinessRating = selectedCleanlinessRating.takeIf { includeRating },
-                        markedDirty = markedDirty,
-                        markedClosed = markedClosed
-                    )
-                )
-            }.onSuccess { updated ->
-                selectedAggregate = updated
-                val successMessage = when {
-                    markedClosed -> "Marked restroom as temporarily closed."
-                    markedDirty -> "Marked restroom as temporarily dirty."
-                    includeRating -> "Saved cleanliness rating."
-                    else -> "Update saved."
-                }
-                Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
-            }.onFailure { error ->
-                feedbackErrorMessage = error.message ?: "Unable to save your update right now."
-            }
-            isSubmittingFeedback = false
-        }
-    }
-
-    // Logic for searching nearby restrooms.
-    fun searchForBathrooms(center: LatLng, query: String) {
-        isSearching = true
-        val placeFields = listOf(Place.Field.ID, Place.Field.DISPLAY_NAME, Place.Field.LOCATION)
-        val searchRequest = SearchByTextRequest.builder(query, placeFields)
-            .setLocationBias(CircularBounds.newInstance(center, 5000.0))
-            .setMaxResultCount(20)
-            .build()
-
-        placesClient.searchByText(searchRequest)
-            .addOnSuccessListener { response ->
-                bathroomLocations = response.places
-                activeRoute = null
-                activeRouteDestinationName = null
-                activeRouteDestinationLocation = null
-                clearSelectedPlace()
-                isSearching = false
-                showSearchThisArea = false
-            }
-            .addOnFailureListener { exception ->
-                Log.e("Search", "Failed: ${exception.message}")
-                isSearching = false
-            }
     }
 
     // Handles location permission requests.
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-        hasLocationPermission = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (hasLocationPermission) {
+        viewModel.hasLocationPermission = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || 
+                                         permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (viewModel.hasLocationPermission) {
             LocationServices.getFusedLocationProviderClient(context).lastLocation.addOnSuccessListener { location ->
                 location?.let {
                     val latLng = LatLng(it.latitude, it.longitude)
-                    userLocation = latLng
+                    viewModel.userLocation = latLng
                     cameraPositionState.position = CameraPosition.fromLatLngZoom(latLng, 15f)
-                    searchForBathrooms(latLng, selectedType)
+                    viewModel.searchForBathrooms(placesClient, latLng, viewModel.selectedType)
                 }
             }
         }
@@ -182,99 +76,118 @@ fun MapScreen() {
     }
 
     LaunchedEffect(cameraPositionState.isMoving) {
-        if (cameraPositionState.isMoving) showSearchThisArea = true
+        if (cameraPositionState.isMoving) viewModel.onCameraMoved()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
-            properties = MapProperties(isMyLocationEnabled = hasLocationPermission),
+            properties = MapProperties(isMyLocationEnabled = viewModel.hasLocationPermission),
             uiSettings = MapUiSettings(zoomControlsEnabled = true, myLocationButtonEnabled = false),
-            contentPadding = PaddingValues(top = 80.dp, bottom = 96.dp, start = 16.dp, end = 16.dp)
+            contentPadding = PaddingValues(top = 80.dp, bottom = 96.dp, start = 16.dp, end = 16.dp),
+            onMapLongClick = { viewModel.onMapLongClick(it) }
         ) {
-            activeRoute?.let { route ->
+            viewModel.activeRoute?.let { route ->
                 Polyline(points = route.points, color = Color(0xFF1E88E5), width = 14f)
             }
-            bathroomLocations.forEach { place ->
+
+            // Google Places Markers
+            viewModel.visibleGoogleRestrooms.forEach { place ->
                 place.location?.let { latLng ->
                     Marker(
                         state = MarkerState(position = latLng),
                         title = place.displayName,
                         snippet = "Tap for community status",
                         onClick = {
-                            loadFeedbackForPlace(place)
+                            viewModel.loadFeedbackForPlace(place)
                             true
                         }
                     )
                 }
+            }
+
+            // Custom Community Markers
+            viewModel.visibleCustomRestrooms.forEach { custom ->
+                Marker(
+                    state = MarkerState(position = LatLng(custom.latitude, custom.longitude)),
+                    title = custom.name,
+                    snippet = "Community Added",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
+                    onClick = {
+                        viewModel.loadFeedbackForCustom(custom)
+                        true
+                    }
+                )
+            }
+            
+            // Temporary marker for the one being added
+            viewModel.pendingNewRestroomLocation?.let {
+                Marker(
+                    state = MarkerState(position = it),
+                    title = "New Restroom Location",
+                    alpha = 0.7f
+                )
             }
         }
 
         // Selection chips for restroom types.
         Surface(modifier = Modifier.fillMaxWidth().padding(top = 48.dp), color = Color.White.copy(alpha = 0.95f), shadowElevation = 8.dp) {
             Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp, horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                restroomTypes.forEachIndexed { index, type ->
+                viewModel.restroomTypes.forEachIndexed { index, type ->
                     AssistChip(
-                        onClick = { selectedTypeIndex = index; searchForBathrooms(cameraPositionState.position.target, type) },
+                        onClick = { viewModel.updateSelectedType(index, placesClient, cameraPositionState.position.target) },
                         label = { Text(type) },
                         modifier = Modifier.padding(horizontal = 4.dp),
-                        enabled = !isSearching
+                        enabled = !viewModel.isSearching
                     )
                 }
             }
         }
 
-        if (showSearchThisArea) {
-            Button(onClick = { searchForBathrooms(cameraPositionState.position.target, selectedType) }, enabled = !isSearching, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)) {
-                Text(if (isSearching) "Searching..." else "Search this area")
+        if (viewModel.showSearchThisArea) {
+            Button(
+                onClick = { viewModel.searchForBathrooms(placesClient, cameraPositionState.position.target, viewModel.selectedType) },
+                enabled = !viewModel.isSearching,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
+            ) {
+                Text(if (viewModel.isSearching) "Searching..." else "Search this area")
             }
         }
 
-        if (bathroomLocations.isNotEmpty()) {
+        if (viewModel.bathroomLocations.isNotEmpty()) {
             Button(
                 onClick = {
-                    val origin = userLocation ?: return@Button
-                    val nearest = findNearestBathroom(origin, bathroomLocations) ?: return@Button
-                    val dest = nearest.location ?: return@Button
+                    val origin = viewModel.userLocation ?: return@Button
                     val key = mapsApiKey ?: return@Button
-                    isLoadingRoute = true
-                    coroutineScope.launch {
-                        val route = fetchWalkingRoute(key, origin, dest)
-                        isLoadingRoute = false
-                        if (route != null) {
-                            activeRoute = route
-                            activeRouteDestinationName = nearest.displayName ?: "Nearest restroom"
-                            activeRouteDestinationLocation = dest
-                        } else Toast.makeText(context, "Unable to load route", Toast.LENGTH_SHORT).show()
-                    }
+                    viewModel.fetchRoute(origin, key)
                 },
-                enabled = !isSearching && !isLoadingRoute,
+                enabled = !viewModel.isSearching && !viewModel.isLoadingRoute,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
             ) {
-                Text(if (isLoadingRoute) "Loading route..." else "Show route to nearest restroom")
+                Text(if (viewModel.isLoadingRoute) "Loading route..." else "Show route to nearest restroom")
             }
         }
 
-        activeRoute?.let { route ->
+        viewModel.activeRoute?.let { route ->
             Surface(modifier = Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 136.dp), color = Color.White.copy(alpha = 0.95f), shadowElevation = 8.dp) {
                 Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "Route to ${activeRouteDestinationName ?: "nearest"}: ${route.distanceText} • ${route.durationText}", modifier = Modifier.weight(1f))
+                    Text(text = "Route to ${viewModel.activeRouteDestinationName ?: "nearest"}: ${route.distanceText} • ${route.durationText}", modifier = Modifier.weight(1f))
                     TextButton(onClick = {
-                        activeRouteDestinationLocation?.let { loc ->
+                        viewModel.activeRouteDestinationLocation?.let { loc ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${loc.latitude},${loc.longitude}")).apply { setPackage("com.google.android.apps.maps") }
                             context.startActivity(intent)
                         }
                     }) { Text("Navigate") }
-                    TextButton(onClick = { activeRoute = null; activeRouteDestinationName = null; activeRouteDestinationLocation = null }) { Text("Clear") }
+                    TextButton(onClick = { viewModel.clearRoute() }) { Text("Clear") }
                 }
             }
         }
 
-        if (selectedPlace != null && selectedPlaceName != null) {
+        if (viewModel.selectedRestroomId != null && viewModel.selectedRestroomName != null) {
             AlertDialog(
-                onDismissRequest = ::clearSelectedPlace,
-                title = { Text(selectedPlaceName ?: "Restroom") },
+                onDismissRequest = { viewModel.clearSelectedPlace() },
+                title = { Text(viewModel.selectedRestroomName ?: "Restroom") },
                 text = {
                     Column(
                         modifier = Modifier
@@ -282,18 +195,78 @@ fun MapScreen() {
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (isLoadingFeedback) {
+                        if (viewModel.isLoadingFeedback) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                 Text("Loading community status…")
                             }
                         } else {
-                            selectedAggregate?.let {
-                                RestroomAggregateSummary(aggregate = it)
+                            viewModel.selectedAggregate?.let { agg ->
+                                RestroomAggregateSummary(aggregate = agg)
+                                if (agg.note.isNotBlank()) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = MaterialTheme.shapes.small,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "Note: ${agg.note}",
+                                            modifier = Modifier.padding(8.dp),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
                             } ?: Text("No community reports yet. You can add the first rating or status update.")
 
-                            feedbackErrorMessage?.let {
+                            viewModel.feedbackErrorMessage?.let {
                                 Text(text = it, color = MaterialTheme.colorScheme.error)
+                            }
+
+                            Text(
+                                text = "Update status or add a note:",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+
+                            OutlinedTextField(
+                                value = viewModel.userNoteUpdate,
+                                onValueChange = { viewModel.userNoteUpdate = it },
+                                label = { Text("Add/Update Note") },
+                                placeholder = { Text("e.g. Back of the restaurant") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Text("Change Category", style = MaterialTheme.typography.labelLarge)
+                            var isDropdownExpanded by remember { mutableStateOf(false) }
+
+                            ExposedDropdownMenuBox(
+                                expanded = isDropdownExpanded,
+                                onExpandedChange = { isDropdownExpanded = !isDropdownExpanded },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = viewModel.userCategoryUpdate,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Category") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded) },
+                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = isDropdownExpanded,
+                                    onDismissRequest = { isDropdownExpanded = false }
+                                ) {
+                                    viewModel.restroomTypes.forEach { type ->
+                                        DropdownMenuItem(
+                                            text = { Text(type) },
+                                            onClick = {
+                                                viewModel.userCategoryUpdate = type
+                                                isDropdownExpanded = false
+                                            },
+                                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                                        )
+                                    }
+                                }
                             }
 
                             Text(
@@ -301,59 +274,150 @@ fun MapScreen() {
                                 style = MaterialTheme.typography.bodySmall
                             )
                             CleanlinessRatingRow(
-                                selectedRating = selectedCleanlinessRating,
-                                onRatingSelected = { selectedCleanlinessRating = it }
+                                selectedRating = viewModel.selectedCleanlinessRating,
+                                onRatingSelected = { viewModel.selectedCleanlinessRating = it }
                             )
 
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 FilledTonalButton(
-                                    onClick = { submitFeedback(includeRating = true) },
-                                    enabled = !isSubmittingFeedback
+                                    onClick = { viewModel.submitFeedback(includeRating = true) },
+                                    enabled = !viewModel.isSubmittingFeedback
                                 ) {
-                                    Text("Save rating")
+                                    Text(if (viewModel.userNoteUpdate.isNotBlank()) "Save Update" else "Save Rating")
                                 }
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(
-                                    onClick = { submitFeedback(markedDirty = true) },
-                                    enabled = !isSubmittingFeedback
+                                    onClick = { viewModel.submitFeedback(markedDirty = true) },
+                                    enabled = !viewModel.isSubmittingFeedback
                                 ) {
                                     Text("Dirty now")
                                 }
                                 OutlinedButton(
-                                    onClick = { submitFeedback(markedClosed = true) },
-                                    enabled = !isSubmittingFeedback
+                                    onClick = { viewModel.submitFeedback(markedClosed = true) },
+                                    enabled = !viewModel.isSubmittingFeedback
                                 ) {
                                     Text("Closed now")
                                 }
                             }
 
-                            if (isSubmittingFeedback) {
+                            if (viewModel.isSubmittingFeedback) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                                     Text("Saving update…")
                                 }
+                            }
+
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                            TextButton(
+                                onClick = { viewModel.deleteRestroom() },
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                modifier = Modifier.align(Alignment.End),
+                                enabled = !viewModel.isSubmittingFeedback
+                            ) {
+                                val label = if (viewModel.selectedPlace == null) "Delete Restroom" else "Report as Incorrect"
+                                Text(label)
                             }
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        selectedPlace?.location?.let { loc ->
+                        viewModel.selectedRestroomLocation?.let { loc ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${loc.latitude},${loc.longitude}")).apply { setPackage("com.google.android.apps.maps") }
                             context.startActivity(intent)
                         }
                     }) { Text("Navigate") }
                 },
-                dismissButton = { TextButton(onClick = ::clearSelectedPlace) { Text("Close") } }
+                dismissButton = { TextButton(onClick = { viewModel.clearSelectedPlace() }) { Text("Close") } }
+            )
+        }
+
+        // Add Restroom Dialog
+        if (viewModel.pendingNewRestroomLocation != null) {
+            AlertDialog(
+                onDismissRequest = { viewModel.pendingNewRestroomLocation = null },
+                title = { Text("Add Missing Restroom") },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        Text("Give this location a name and category so others can find it.")
+                        OutlinedTextField(
+                            value = viewModel.newRestroomName,
+                            onValueChange = { viewModel.newRestroomName = it },
+                            label = { Text("Restroom Name") },
+                            placeholder = { Text("e.g. Central Park North") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = viewModel.newRestroomNote,
+                            onValueChange = { viewModel.newRestroomNote = it },
+                            label = { Text("Notes (Optional)") },
+                            placeholder = { Text("e.g. Inside Hector's Mariscos") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        Text("Category", style = MaterialTheme.typography.labelLarge)
+                        var isAddDropdownExpanded by remember { mutableStateOf(false) }
+
+                        ExposedDropdownMenuBox(
+                            expanded = isAddDropdownExpanded,
+                            onExpandedChange = { isAddDropdownExpanded = !isAddDropdownExpanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = viewModel.newRestroomCategory,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Category") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isAddDropdownExpanded) },
+                                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = isAddDropdownExpanded,
+                                onDismissRequest = { isAddDropdownExpanded = false }
+                            ) {
+                                viewModel.restroomTypes.forEach { type ->
+                                    DropdownMenuItem(
+                                        text = { Text(type) },
+                                        onClick = {
+                                            viewModel.newRestroomCategory = type
+                                            isAddDropdownExpanded = false
+                                        },
+                                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.saveCustomRestroom() },
+                        enabled = viewModel.newRestroomName.isNotBlank()
+                    ) {
+                        Text("Add to Map")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.pendingNewRestroomLocation = null }) {
+                        Text("Cancel")
+                    }
+                }
             )
         }
 
         // Custom My Location button positioned near zoom controls.
         FloatingActionButton(
             onClick = {
-                userLocation?.let {
+                viewModel.userLocation?.let {
                     coroutineScope.launch {
                         cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(it, 15f))
                     }
@@ -431,4 +495,3 @@ private fun CleanlinessRatingRow(selectedRating: Int, onRatingSelected: (Int) ->
         }
     }
 }
-

@@ -21,14 +21,20 @@ data class RestroomAggregate(
     val closedReports: Int = 0,
     val dirtyUntilEpochMillis: Long = 0L,
     val closedUntilEpochMillis: Long = 0L,
-    val lastUpdatedEpochMillis: Long = 0L
+    val lastUpdatedEpochMillis: Long = 0L,
+    val isMarkedIncorrect: Boolean = false,
+    val note: String = "",
+    val suggestedCategory: String = ""
 )
 
 // Represents one community update submission.
 data class RestroomReportInput(
     val cleanlinessRating: Int? = null,
     val markedDirty: Boolean = false,
-    val markedClosed: Boolean = false
+    val markedClosed: Boolean = false,
+    val markedIncorrect: Boolean = false,
+    val note: String? = null,
+    val suggestedCategory: String? = null
 )
 
 private const val DEFAULT_DIRTY_ALERT_DURATION_MILLIS = 3 * 60 * 60 * 1000L
@@ -71,7 +77,10 @@ fun mergeRestroomAggregate(
         closedReports = current.closedReports + if (report.markedClosed) 1 else 0,
         dirtyUntilEpochMillis = nextDirtyUntil,
         closedUntilEpochMillis = nextClosedUntil,
-        lastUpdatedEpochMillis = nowMillis
+        lastUpdatedEpochMillis = nowMillis,
+        isMarkedIncorrect = current.isMarkedIncorrect || report.markedIncorrect,
+        note = report.note ?: current.note,
+        suggestedCategory = report.suggestedCategory ?: current.suggestedCategory
     )
 }
 
@@ -86,4 +95,17 @@ fun RestroomAggregate.isClosedNow(nowMillis: Long = System.currentTimeMillis()):
 // Converts the historical dirty likelihood to a percentage for UI display.
 fun RestroomAggregate.dirtyLikelihoodPercent(): Int =
     (dirtyLikelihood * 100).toInt().coerceIn(0, 100)
+
+// Represents a restroom added manually by a user.
+data class CustomRestroom(
+    val id: String = "",
+    val name: String = "",
+    val category: String = "Public Restroom",
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val isDeleted: Boolean = false,
+    val note: String = "",
+    val addedByUserId: String = "anonymous",
+    val timestamp: Long = System.currentTimeMillis()
+)
 
