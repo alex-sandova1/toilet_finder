@@ -19,7 +19,22 @@ class RestroomFeedbackRepository(
         return if (snapshot.exists()) snapshot.toObject(RestroomAggregate::class.java) else null
     }
 
+    suspend fun fetchAggregates(ids: List<String>): Map<String, RestroomAggregate> {
+        if (ids.isEmpty()) return emptyMap()
+        // Firestore 'in' query is limited to 30 items
+        val chunks = ids.chunked(30)
+        val results = mutableMapOf<String, RestroomAggregate>()
+        for (chunk in chunks) {
+            val snapshot = bathroomsCollection.whereIn("placeId", chunk).get().await()
+            snapshot.documents.forEach { doc ->
+                doc.toObject(RestroomAggregate::class.java)?.let { results[it.placeId] = it }
+            }
+        }
+        return results
+    }
+
     suspend fun saveCustomRestroom(name: String, category: String, note: String, latLng: LatLng): String {
+        val userId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "anonymous"
         val docRef = customBathroomsCollection.document()
         val custom = com.example.driverassist.model.CustomRestroom(
             id = docRef.id,
@@ -27,7 +42,8 @@ class RestroomFeedbackRepository(
             category = category,
             note = note,
             latitude = latLng.latitude,
-            longitude = latLng.longitude
+            longitude = latLng.longitude,
+            addedByUserId = userId
         )
         docRef.set(custom).await()
         return docRef.id

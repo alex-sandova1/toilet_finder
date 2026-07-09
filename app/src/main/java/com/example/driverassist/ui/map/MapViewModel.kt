@@ -5,10 +5,9 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.driverassist.data.RestroomFeedbackRepository
-import com.example.driverassist.model.RestroomAggregate
-import com.example.driverassist.model.RestroomReportInput
-import com.example.driverassist.model.RouteDetails
-import com.example.driverassist.network.fetchWalkingRoute
+import com.example.driverassist.data.UserRepository
+import com.example.driverassist.model.*
+import com.example.driverassist.network.fetchDrivingRoute
 import com.example.driverassist.util.distanceMeters
 import com.example.driverassist.util.findNearestBathroom
 import com.google.android.gms.maps.model.LatLng
@@ -16,10 +15,28 @@ import com.google.android.libraries.places.api.model.CircularBounds
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.android.libraries.places.api.net.SearchByTextRequest
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 
 class MapViewModel : ViewModel() {
     private val feedbackRepository = RestroomFeedbackRepository()
+    private val userRepository = UserRepository()
+    private val auth = FirebaseAuth.getInstance()
+
+    val currentUser get() = auth.currentUser
+    var userProfile by mutableStateOf<UserProfile?>(null)
+        private set
+
+    init {
+        loadUserProfile()
+    }
+
+    private fun loadUserProfile() {
+        val uid = auth.currentUser?.uid ?: return
+        viewModelScope.launch {
+            userProfile = userRepository.fetchUserProfile(uid)
+        }
+    }
 
     val restroomTypes = listOf(
         "Public Restroom", "fast food restaurant restroom", "gas station restroom",
@@ -41,12 +58,25 @@ class MapViewModel : ViewModel() {
         private set
     var categoryOverrides by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+    var restroomAggregates by mutableStateOf<Map<String, RestroomAggregate>>(emptyMap())
+        private set
 
     val visibleGoogleRestrooms: List<Place>
         get() = bathroomLocations.filter { place ->
             val id = feedbackRepository.documentIdForPlace(place)
             if (incorrectRestroomIds.contains(id)) return@filter false
             
+            // Premium Filter: Hide dirty or poorly rated restrooms
+            if (isVerifiedFilterEnabled) {
+                val agg = restroomAggregates[id]
+                if (agg != null) {
+                    val now = System.currentTimeMillis()
+                    // Filter out if reported dirty now OR if average cleanliness is poor (< 3.0)
+                    if (agg.isDirtyNow(now)) return@filter false
+                    if (agg.ratingCount > 0 && agg.avgCleanliness < 3.0) return@filter false
+                }
+            }
+
             // If the community assigned a different category, check if it still matches the current filter
             val override = categoryOverrides[id]
             if (override != null && override.isNotBlank()) {
@@ -59,6 +89,16 @@ class MapViewModel : ViewModel() {
         get() = customRestrooms.filter { custom ->
             // Filter by deletion flag
             if (custom.isDeleted) return@filter false
+            
+            // Premium Filter: Hide dirty or poorly rated custom restrooms
+            if (isVerifiedFilterEnabled) {
+                val agg = restroomAggregates[custom.id]
+                if (agg != null) {
+                    val now = System.currentTimeMillis()
+                    if (agg.isDirtyNow(now)) return@filter false
+                    if (agg.ratingCount > 0 && agg.avgCleanliness < 3.0) return@filter false
+                }
+            }
             
             // Filter by category
             val matchesCategory = custom.category.equals(selectedType, ignoreCase = true)
@@ -76,6 +116,9 @@ class MapViewModel : ViewModel() {
     var showSearchThisArea by mutableStateOf(false)
     var isSearching by mutableStateOf(false)
         private set
+    var isInitialLoading by mutableStateOf(true)
+        private set
+    var isVerifiedFilterEnabled by mutableStateOf(false)
     var isLoadingRoute by mutableStateOf(false)
         private set
 
@@ -102,6 +145,8 @@ class MapViewModel : ViewModel() {
     var selectedCleanlinessRating by mutableIntStateOf(3)
     var userNoteUpdate by mutableStateOf("")
     var userCategoryUpdate by mutableStateOf("")
+    var markedDirtyUpdate by mutableStateOf(false)
+    var markedClosedUpdate by mutableStateOf(false)
 
     var activeRoute by mutableStateOf<RouteDetails?>(null)
         private set
@@ -121,6 +166,14 @@ class MapViewModel : ViewModel() {
         searchForBathrooms(placesClient, center, selectedType)
     }
 
+    fun toggleVerifiedFilter() {
+        if (userProfile?.isVerifiedUser == true) {
+            isVerifiedFilterEnabled = !isVerifiedFilterEnabled
+        } else {
+            toastMessage = "Upgrade to Verified User to use this filter!"
+        }
+    }
+
     fun clearSelectedPlace() {
         selectedRestroomId = null
         selectedRestroomName = null
@@ -133,6 +186,8 @@ class MapViewModel : ViewModel() {
         selectedCleanlinessRating = 3
         userNoteUpdate = ""
         userCategoryUpdate = ""
+        markedDirtyUpdate = false
+        markedClosedUpdate = false
     }
 
     fun loadFeedbackForPlace(place: Place) {
@@ -160,6 +215,8 @@ class MapViewModel : ViewModel() {
         selectedAggregate = null
         feedbackErrorMessage = null
         selectedCleanlinessRating = 3
+        markedDirtyUpdate = false
+        markedClosedUpdate = false
         isLoadingFeedback = true
 
         viewModelScope.launch {
@@ -177,7 +234,7 @@ class MapViewModel : ViewModel() {
         }
     }
 
-    fun submitFeedback(markedDirty: Boolean = false, markedClosed: Boolean = false, includeRating: Boolean = false) {
+    fun submitFeedback(includeRating: Boolean = false) {
         val id = selectedRestroomId ?: return
         val name = selectedRestroomName ?: "Restroom"
         val note = if (userNoteUpdate.isNotBlank()) userNoteUpdate else null
@@ -198,8 +255,8 @@ class MapViewModel : ViewModel() {
                     name = name,
                     report = RestroomReportInput(
                         cleanlinessRating = selectedCleanlinessRating.takeIf { includeRating },
-                        markedDirty = markedDirty,
-                        markedClosed = markedClosed,
+                        markedDirty = markedDirtyUpdate,
+                        markedClosed = markedClosedUpdate,
                         note = note,
                         suggestedCategory = category
                     )
@@ -207,7 +264,14 @@ class MapViewModel : ViewModel() {
             }.onSuccess { updated ->
                 selectedAggregate = updated
                 userNoteUpdate = ""
+                markedDirtyUpdate = false
+                markedClosedUpdate = false
                 toastMessage = "Update saved."
+                
+                // Update local aggregates map for filtering
+                restroomAggregates = restroomAggregates.toMutableMap().apply {
+                    put(id, updated)
+                }
                 
                 // Update local state immediately to prevent "flickering"
                 if (isCustom && category != null) {
@@ -252,14 +316,25 @@ class MapViewModel : ViewModel() {
         placesClient.searchByText(searchRequest)
             .addOnSuccessListener { response ->
                 bathroomLocations = response.places
+                
+                // Fetch aggregate data for all found restrooms
+                val allIds = bathroomLocations.map { feedbackRepository.documentIdForPlace(it) } + 
+                            customRestrooms.map { it.id }
+                viewModelScope.launch {
+                    val aggregates = feedbackRepository.fetchAggregates(allIds)
+                    restroomAggregates = aggregates
+                }
+
                 clearRoute()
                 clearSelectedPlace()
                 isSearching = false
+                isInitialLoading = false
                 showSearchThisArea = false
             }
             .addOnFailureListener { exception ->
                 Log.e("Search", "Failed: ${exception.message}")
                 isSearching = false
+                isInitialLoading = false
             }
     }
 
@@ -268,7 +343,7 @@ class MapViewModel : ViewModel() {
         val dest = nearest.location ?: return
         isLoadingRoute = true
         viewModelScope.launch {
-            val route = fetchWalkingRoute(mapsApiKey, origin, dest)
+            val route = fetchDrivingRoute(mapsApiKey, origin, dest)
             isLoadingRoute = false
             if (route != null) {
                 activeRoute = route
@@ -284,6 +359,11 @@ class MapViewModel : ViewModel() {
         activeRoute = null
         activeRouteDestinationName = null
         activeRouteDestinationLocation = null
+    }
+
+    fun signOut() {
+        auth.signOut()
+        clearSelectedPlace()
     }
 
     fun onCameraMoved() {

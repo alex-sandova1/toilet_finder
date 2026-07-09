@@ -48,9 +48,9 @@ fun parseRouteDetails(responseBody: String): RouteDetails? {
     )
 }
 
-// Fetches walking directions from API.
-suspend fun fetchWalkingRoute(apiKey: String, origin: LatLng, destination: LatLng): RouteDetails? = withContext(Dispatchers.IO) {
-    val urlString = "https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=walking&key=$apiKey"
+// Fetches driving directions from API.
+suspend fun fetchDrivingRoute(apiKey: String, origin: LatLng, destination: LatLng): RouteDetails? = withContext(Dispatchers.IO) {
+    val urlString = "https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=driving&key=$apiKey"
     var connection: HttpURLConnection? = null
     try {
         connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
