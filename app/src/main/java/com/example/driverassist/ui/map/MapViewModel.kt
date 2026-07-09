@@ -2,10 +2,12 @@ package com.example.driverassist.ui.map
 
 import android.util.Log
 import androidx.compose.runtime.*
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.driverassist.data.RestroomFeedbackRepository
 import com.example.driverassist.data.UserRepository
+import com.example.driverassist.data.local.OfflineRestroom
+import com.example.driverassist.data.local.RestroomDatabase
 import com.example.driverassist.model.*
 import com.example.driverassist.network.fetchDrivingRoute
 import com.example.driverassist.util.distanceMeters
@@ -18,8 +20,10 @@ import com.google.android.libraries.places.api.net.SearchByTextRequest
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 
-class MapViewModel : ViewModel() {
+class MapViewModel(application: android.app.Application) : AndroidViewModel(application) {
     private val feedbackRepository = RestroomFeedbackRepository()
+    private val database = RestroomDatabase.getDatabase(application)
+    private val restroomDao = database.restroomDao()
     private val userRepository = UserRepository()
     private val auth = FirebaseAuth.getInstance()
 
@@ -27,8 +31,17 @@ class MapViewModel : ViewModel() {
     var userProfile by mutableStateOf<UserProfile?>(null)
         private set
 
+    var localOfflineRestrooms by mutableStateOf<List<OfflineRestroom>>(emptyList())
+        private set
+
     init {
         loadUserProfile()
+        // Collect local restrooms from Room for offline access
+        viewModelScope.launch {
+            restroomDao.getAllOfflineRestrooms().collect { localRestrooms ->
+                localOfflineRestrooms = localRestrooms
+            }
+        }
     }
 
     private fun loadUserProfile() {
@@ -86,30 +99,51 @@ class MapViewModel : ViewModel() {
         }
 
     val visibleCustomRestrooms: List<com.example.driverassist.model.CustomRestroom>
-        get() = customRestrooms.filter { custom ->
-            // Filter by deletion flag
-            if (custom.isDeleted) return@filter false
+        get() {
+            // Start with community restrooms from Firestore
+            val communityList = customRestrooms.toMutableList()
             
-            // Premium Filter: Hide dirty or poorly rated custom restrooms
-            if (isVerifiedFilterEnabled) {
-                val agg = restroomAggregates[custom.id]
-                if (agg != null) {
-                    val now = System.currentTimeMillis()
-                    if (agg.isDirtyNow(now)) return@filter false
-                    if (agg.ratingCount > 0 && agg.avgCleanliness < 3.0) return@filter false
+            // Add local restrooms from Room that aren't already in the list
+            localOfflineRestrooms.forEach { offline ->
+                if (communityList.none { it.id == offline.id }) {
+                    communityList.add(
+                        com.example.driverassist.model.CustomRestroom(
+                            id = offline.id,
+                            name = offline.name,
+                            category = offline.category,
+                            note = offline.note,
+                            latitude = offline.latitude,
+                            longitude = offline.longitude
+                        )
+                    )
                 }
             }
-            
-            // Filter by category
-            val matchesCategory = custom.category.equals(selectedType, ignoreCase = true)
-            if (!matchesCategory) return@filter false
 
-            // Then filter by distance to Google Places to prevent duplicates
-            val customLatLng = LatLng(custom.latitude, custom.longitude)
-            visibleGoogleRestrooms.none { googlePlace ->
-                googlePlace.location?.let { googleLatLng ->
-                    distanceMeters(customLatLng, googleLatLng) < 20.0
-                } ?: false
+            return communityList.filter { custom ->
+                // Filter by deletion flag
+                if (custom.isDeleted) return@filter false
+                
+                // Premium Filter: Hide dirty or poorly rated custom restrooms
+                if (isVerifiedFilterEnabled) {
+                    val agg = restroomAggregates[custom.id]
+                    if (agg != null) {
+                        val now = System.currentTimeMillis()
+                        if (agg.isDirtyNow(now)) return@filter false
+                        if (agg.ratingCount > 0 && agg.avgCleanliness < 3.0) return@filter false
+                    }
+                }
+                
+                // Filter by category
+                val matchesCategory = custom.category.equals(selectedType, ignoreCase = true)
+                if (!matchesCategory) return@filter false
+
+                // Then filter by distance to Google Places to prevent duplicates
+                val customLatLng = LatLng(custom.latitude, custom.longitude)
+                visibleGoogleRestrooms.none { googlePlace ->
+                    googlePlace.location?.let { googleLatLng ->
+                        distanceMeters(customLatLng, googleLatLng) < 20.0
+                    } ?: false
+                }
             }
         }
 
@@ -389,9 +423,24 @@ class MapViewModel : ViewModel() {
         viewModelScope.launch {
             runCatching {
                 feedbackRepository.saveCustomRestroom(name, category, note, location)
-            }.onSuccess {
+            }.onSuccess { id ->
                 toastMessage = "Restroom added to community map!"
                 pendingNewRestroomLocation = null
+                
+                // Save to Room for offline access
+                viewModelScope.launch {
+                    restroomDao.insertRestroom(
+                        OfflineRestroom(
+                            id = id,
+                            name = name,
+                            category = category,
+                            note = note,
+                            latitude = location.latitude,
+                            longitude = location.longitude
+                        )
+                    )
+                }
+
                 // Refresh list
                 customRestrooms = feedbackRepository.fetchCustomRestrooms()
             }.onFailure {
@@ -410,6 +459,8 @@ class MapViewModel : ViewModel() {
             runCatching {
                 if (isCustom) {
                     feedbackRepository.deleteCustomRestroom(id)
+                    // Also delete from local Room database
+                    restroomDao.deleteById(id)
                 } else {
                     feedbackRepository.submitReport(
                         id = id,
