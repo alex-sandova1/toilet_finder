@@ -32,7 +32,6 @@ import com.example.driverassist.model.RestroomAggregate
 import com.example.driverassist.model.dirtyLikelihoodPercent
 import com.example.driverassist.model.isClosedNow
 import com.example.driverassist.model.isDirtyNow
-import com.example.driverassist.util.resolveMapsApiKey
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
@@ -49,7 +48,6 @@ import java.util.Locale
 fun MapScreen(viewModel: MapViewModel = viewModel()) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val mapsApiKey = remember(context) { resolveMapsApiKey(context) }
     val cameraPositionState = rememberCameraPositionState()
     val placesClient = remember { Places.createClient(context) }
     val mapProperties by remember(viewModel.hasLocationPermission) {
@@ -225,31 +223,18 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
             if (viewModel.bathroomLocations.isNotEmpty()) {
                 Button(
                     onClick = {
-                        val origin = viewModel.userLocation ?: return@Button
-                        val key = mapsApiKey ?: return@Button
-                        viewModel.fetchRoute(origin, key)
+                        val nearest = viewModel.findAndNavigateToNearestRestroom(context)
+                        if (nearest == null) {
+                            Toast.makeText(context, "No restrooms found nearby.", Toast.LENGTH_SHORT).show()
+                        }
                     },
-                    enabled = !viewModel.isSearching && !viewModel.isLoadingRoute,
+                    enabled = !viewModel.isSearching,
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
                 ) {
-                    Text(if (viewModel.isLoadingRoute) "Loading route..." else "Show route to nearest restroom")
+                    Text("Navigate to nearest restroom")
                 }
             }
 
-            viewModel.activeRoute?.let { route ->
-                Surface(modifier = Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 136.dp), color = Color.White.copy(alpha = 0.95f), shadowElevation = 8.dp) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = "Route to ${viewModel.activeRouteDestinationName ?: "nearest"}: ${route.distanceText} • ${route.durationText}", modifier = Modifier.weight(1f))
-                        TextButton(onClick = {
-                            viewModel.activeRouteDestinationLocation?.let { loc ->
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${loc.latitude},${loc.longitude}")).apply { setPackage("com.google.android.apps.maps") }
-                                context.startActivity(intent)
-                            }
-                        }) { Text("Navigate") }
-                        TextButton(onClick = { viewModel.clearRoute() }) { Text("Clear") }
-                    }
-                }
-            }
 
             if (viewModel.selectedRestroomId != null && viewModel.selectedRestroomName != null) {
                 var showFeedbackInputs by remember { mutableStateOf(false) }

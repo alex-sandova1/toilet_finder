@@ -36,7 +36,11 @@ fun decodePolyline(encoded: String): List<LatLng> {
 // Parses JSON into route data.
 fun parseRouteDetails(responseBody: String): RouteDetails? {
     val responseJson = JSONObject(responseBody)
-    if (responseJson.optString("status") != "OK") return null
+    val status = responseJson.optString("status")
+    if (status != "OK") {
+        Log.w("Directions", "Directions API status=$status")
+        return null
+    }
     val route = responseJson.optJSONArray("routes")?.optJSONObject(0) ?: return null
     val encodedPolyline = route.optJSONObject("overview_polyline")?.optString("points").orEmpty()
     if (encodedPolyline.isBlank()) return null
@@ -48,20 +52,43 @@ fun parseRouteDetails(responseBody: String): RouteDetails? {
     )
 }
 
-// Fetches driving directions from API.
-suspend fun fetchDrivingRoute(apiKey: String, origin: LatLng, destination: LatLng): RouteDetails? = withContext(Dispatchers.IO) {
-    val urlString = "https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=driving&key=$apiKey"
+private suspend fun fetchDirectionsResponse(
+    apiKey: String,
+    origin: LatLng,
+    destination: LatLng,
+    mode: String
+): String = withContext(Dispatchers.IO) {
+    val urlString = "https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=$mode&key=$apiKey"
     var connection: HttpURLConnection? = null
     try {
         connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"; connectTimeout = 10000; readTimeout = 10000
+            requestMethod = "GET"
+            connectTimeout = 10000
+            readTimeout = 10000
         }
-        val body = if (connection.responseCode in 200..299) connection.inputStream.bufferedReader().use { it.readText() }
-        else connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        parseRouteDetails(body)
-    } catch (e: Exception) {
-        Log.e("Directions", "Failed: ${e.message}"); null
+        if (connection.responseCode in 200..299) {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        }
     } finally {
         connection?.disconnect()
     }
 }
+
+// Fetches driving directions from API.
+suspend fun fetchDrivingRoute(apiKey: String, origin: LatLng, destination: LatLng): RouteDetails? = withContext(Dispatchers.IO) {
+    try {
+        val drivingBody = fetchDirectionsResponse(apiKey, origin, destination, mode = "driving")
+        val drivingRoute = parseRouteDetails(drivingBody)
+        if (drivingRoute != null) return@withContext drivingRoute
+
+        val drivingStatus = runCatching { JSONObject(drivingBody).optString("status") }.getOrNull()
+        Log.i("Directions", "Driving route unavailable, status=$drivingStatus")
+        null
+    } catch (e: Exception) {
+        Log.e("Directions", "Failed: ${e.message}")
+        null
+    }
+}
+

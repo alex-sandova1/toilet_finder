@@ -1,9 +1,14 @@
 package com.example.driverassist.ui.map
 
 import android.util.Log
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.TimeoutCancellationException
 import com.example.driverassist.data.RestroomFeedbackRepository
 import com.example.driverassist.data.UserRepository
 import com.example.driverassist.data.local.OfflineRestroom
@@ -11,7 +16,6 @@ import com.example.driverassist.data.local.RestroomDatabase
 import com.example.driverassist.model.*
 import com.example.driverassist.network.fetchDrivingRoute
 import com.example.driverassist.util.distanceMeters
-import com.example.driverassist.util.findNearestBathroom
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.model.CircularBounds
 import com.google.android.libraries.places.api.model.Place
@@ -65,7 +69,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var userLocation by mutableStateOf<LatLng?>(null)
     var bathroomLocations by mutableStateOf<List<Place>>(emptyList())
         private set
-    var customRestrooms by mutableStateOf<List<com.example.driverassist.model.CustomRestroom>>(emptyList())
+    var customRestrooms by mutableStateOf<List<CustomRestroom>>(emptyList())
         private set
     var incorrectRestroomIds by mutableStateOf<Set<String>>(emptySet())
         private set
@@ -98,7 +102,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
             true
         }
 
-    val visibleCustomRestrooms: List<com.example.driverassist.model.CustomRestroom>
+    val visibleCustomRestrooms: List<CustomRestroom>
         get() {
             // Start with community restrooms from Firestore
             val communityList = customRestrooms.toMutableList()
@@ -107,7 +111,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
             localOfflineRestrooms.forEach { offline ->
                 if (communityList.none { it.id == offline.id }) {
                     communityList.add(
-                        com.example.driverassist.model.CustomRestroom(
+                        CustomRestroom(
                             id = offline.id,
                             name = offline.name,
                             category = offline.category,
@@ -155,6 +159,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var isVerifiedFilterEnabled by mutableStateOf(false)
     var isLoadingRoute by mutableStateOf(false)
         private set
+    private var lastRouteRequestAtMs: Long = 0L
 
     // Generic state for whatever restroom is selected
     var selectedRestroomId by mutableStateOf<String?>(null)
@@ -235,7 +240,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         loadFeedback(id)
     }
 
-    fun loadFeedbackForCustom(custom: com.example.driverassist.model.CustomRestroom) {
+    fun loadFeedbackForCustom(custom: CustomRestroom) {
         selectedPlace = null
         selectedRestroomId = custom.id
         selectedRestroomName = custom.name
@@ -326,6 +331,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
 
     fun searchForBathrooms(placesClient: PlacesClient, center: LatLng, query: String) {
         isSearching = true
+        Log.d("Search", "Starting search for '$query' at $center")
         
         // Fetch custom restrooms, incorrect IDs, and category overrides from Firestore
         viewModelScope.launch {
@@ -350,13 +356,17 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         placesClient.searchByText(searchRequest)
             .addOnSuccessListener { response ->
                 bathroomLocations = response.places
+                Log.d("Search", "Search success: found ${response.places.size} places")
+                Log.d("Search", "visibleGoogleRestrooms before filter: ${bathroomLocations.size}")
                 
                 // Fetch aggregate data for all found restrooms
                 val allIds = bathroomLocations.map { feedbackRepository.documentIdForPlace(it) } + 
                             customRestrooms.map { it.id }
+                Log.d("Search", "Fetching aggregates for ${allIds.size} total restrooms")
                 viewModelScope.launch {
                     val aggregates = feedbackRepository.fetchAggregates(allIds)
                     restroomAggregates = aggregates
+                    Log.d("Search", "Aggregates loaded: ${aggregates.size} items")
                 }
 
                 clearRoute()
@@ -364,27 +374,116 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 isSearching = false
                 isInitialLoading = false
                 showSearchThisArea = false
+                Log.d("Search", "Search completed. visibleGoogleRestrooms: ${visibleGoogleRestrooms.size}")
             }
             .addOnFailureListener { exception ->
-                Log.e("Search", "Failed: ${exception.message}")
+                Log.e("Search", "Search failed: ${exception.message}", exception)
+                toastMessage = "Search failed: ${exception.message ?: "Unknown error"}"
                 isSearching = false
                 isInitialLoading = false
             }
     }
 
     fun fetchRoute(origin: LatLng, mapsApiKey: String) {
-        val nearest = findNearestBathroom(origin, bathroomLocations) ?: return
-        val dest = nearest.location ?: return
+        if (isLoadingRoute) return
+        if (mapsApiKey.isBlank()) {
+            toastMessage = "Maps API key not configured."
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastRouteRequestAtMs < 1200L) return
+        lastRouteRequestAtMs = now
+
+        Log.d("Route", "Starting fetchRoute from $origin")
+        data class RouteCandidate(val location: LatLng, val name: String)
+
+        fun isValidRouteLocation(location: LatLng): Boolean {
+            val lat = location.latitude
+            val lng = location.longitude
+            return lat in -90.0..90.0 && lng in -180.0..180.0 && !(lat == 0.0 && lng == 0.0)
+        }
+
+        val candidates = buildList {
+            addAll(
+                visibleGoogleRestrooms.mapNotNull { place ->
+                    place.location?.let { location ->
+                        if (isValidRouteLocation(location)) {
+                            RouteCandidate(location, place.displayName ?: "Nearest restroom")
+                        } else {
+                            null
+                        }
+                    }
+                }
+            )
+            addAll(
+                visibleCustomRestrooms.mapNotNull { custom ->
+                    val location = LatLng(custom.latitude, custom.longitude)
+                    if (isValidRouteLocation(location)) {
+                        RouteCandidate(location, custom.name.ifBlank { "Nearest restroom" })
+                    } else {
+                        null
+                    }
+                }
+            )
+        }
+
+        val orderedCandidates = candidates.distinctBy { it.location.latitude to it.location.longitude }
+            .sortedBy { candidate ->
+            distanceMeters(origin, candidate.location)
+        }
+
+        if (orderedCandidates.isEmpty()) {
+            toastMessage = "No restrooms found nearby."
+            Log.w("Route", "No valid candidates found. visibleGoogle=${visibleGoogleRestrooms.size}, visibleCustom=${visibleCustomRestrooms.size}")
+            return
+        }
+        Log.d("Route", "Found ${orderedCandidates.size} valid candidates")
+
         isLoadingRoute = true
         viewModelScope.launch {
-            val route = fetchDrivingRoute(mapsApiKey, origin, dest)
-            isLoadingRoute = false
-            if (route != null) {
-                activeRoute = route
-                activeRouteDestinationName = nearest.displayName ?: "Nearest restroom"
-                activeRouteDestinationLocation = dest
-            } else {
-                toastMessage = "Unable to load route"
+            try {
+                val routeStartTime = System.currentTimeMillis()
+                val routeRequestKey = orderedCandidates.joinToString(separator = "|") {
+                    "${it.location.latitude},${it.location.longitude}"
+                }
+                var route: RouteDetails? = null
+                var dest: LatLng? = null
+                var destName: String? = null
+
+                for ((idx, candidate) in orderedCandidates.take(6).withIndex()) {
+                    Log.d("Route", "Trying candidate $idx: ${candidate.name} at ${candidate.location}")
+                    val candidateRoute = withTimeoutOrNull(15_000L) {
+                        fetchDrivingRoute(mapsApiKey, origin, candidate.location)
+                    }
+                    if (candidateRoute != null) {
+                        route = candidateRoute
+                        dest = candidate.location
+                        destName = candidate.name
+                        Log.d("Route", "Route found for candidate $idx after ${System.currentTimeMillis() - routeStartTime}ms")
+                        break
+                    }
+                    if (dest == null) {
+                        dest = candidate.location
+                        destName = candidate.name
+                    }
+                }
+
+                if (dest != null && destName != null) {
+                    activeRouteDestinationLocation = dest
+                    activeRouteDestinationName = destName
+                    Log.d("Route", "Set destination: $destName at $dest")
+                }
+
+                if (route != null && dest != null && destName != null) {
+                    activeRoute = route
+                    Log.d("Route", "Route loaded successfully after ${System.currentTimeMillis() - routeStartTime}ms")
+                } else {
+                    activeRoute = null
+                    Log.w("Route", "Route preview unavailable after ${System.currentTimeMillis() - routeStartTime}ms for $routeRequestKey")
+                }
+            } finally {
+                isLoadingRoute = false
             }
         }
     }
@@ -393,6 +492,49 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         activeRoute = null
         activeRouteDestinationName = null
         activeRouteDestinationLocation = null
+    }
+
+    fun findAndNavigateToNearestRestroom(context: Context): String? {
+        val origin = userLocation ?: return null
+
+        data class RouteCandidate(val location: LatLng, val name: String)
+
+        fun isValidLocation(location: LatLng): Boolean {
+            val lat = location.latitude
+            val lng = location.longitude
+            return lat in -90.0..90.0 && lng in -180.0..180.0 && !(lat == 0.0 && lng == 0.0)
+        }
+
+        val candidates = buildList {
+            addAll(
+                visibleGoogleRestrooms.mapNotNull { place ->
+                    place.location?.let { location ->
+                        if (isValidLocation(location)) {
+                            RouteCandidate(location, place.displayName ?: "Restroom")
+                        } else null
+                    }
+                }
+            )
+            addAll(
+                visibleCustomRestrooms.mapNotNull { custom ->
+                    val location = LatLng(custom.latitude, custom.longitude)
+                    if (isValidLocation(location)) {
+                        RouteCandidate(location, custom.name.ifBlank { "Restroom" })
+                    } else null
+                }
+            )
+        }
+
+        val nearest = candidates.minByOrNull { candidate ->
+            distanceMeters(origin, candidate.location)
+        } ?: return null
+
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${nearest.location.latitude},${nearest.location.longitude}")).apply {
+            setPackage("com.google.android.apps.maps")
+        }
+        context.startActivity(intent)
+        Log.d("Navigation", "Opening maps for nearest restroom: ${nearest.name} at ${nearest.location}")
+        return nearest.name
     }
 
     fun signOut() {
