@@ -1,14 +1,5 @@
 package com.example.driverassist.model
 
-import com.google.android.gms.maps.model.LatLng
-
-// Defines route geometry and info.
-data class RouteDetails(
-    val points: List<LatLng>,
-    val distanceText: String,
-    val durationText: String
-)
-
 // Stores the aggregate community state for a restroom.
 data class RestroomAggregate(
     val placeId: String = "",

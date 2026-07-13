@@ -7,14 +7,11 @@ import android.net.Uri
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.TimeoutCancellationException
 import com.example.driverassist.data.RestroomFeedbackRepository
 import com.example.driverassist.data.UserRepository
 import com.example.driverassist.data.local.OfflineRestroom
 import com.example.driverassist.data.local.RestroomDatabase
 import com.example.driverassist.model.*
-import com.example.driverassist.network.fetchDrivingRoute
 import com.example.driverassist.util.distanceMeters
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.model.CircularBounds
@@ -157,9 +154,6 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var isInitialLoading by mutableStateOf(true)
         private set
     var isVerifiedFilterEnabled by mutableStateOf(false)
-    var isLoadingRoute by mutableStateOf(false)
-        private set
-    private var lastRouteRequestAtMs: Long = 0L
 
     // Generic state for whatever restroom is selected
     var selectedRestroomId by mutableStateOf<String?>(null)
@@ -186,13 +180,6 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var userCategoryUpdate by mutableStateOf("")
     var markedDirtyUpdate by mutableStateOf(false)
     var markedClosedUpdate by mutableStateOf(false)
-
-    var activeRoute by mutableStateOf<RouteDetails?>(null)
-        private set
-    var activeRouteDestinationName by mutableStateOf<String?>(null)
-        private set
-    var activeRouteDestinationLocation by mutableStateOf<LatLng?>(null)
-        private set
 
     // Side effect state for Toasts
     var toastMessage by mutableStateOf<String?>(null)
@@ -369,7 +356,6 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                     Log.d("Search", "Aggregates loaded: ${aggregates.size} items")
                 }
 
-                clearRoute()
                 clearSelectedPlace()
                 isSearching = false
                 isInitialLoading = false
@@ -382,116 +368,6 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 isSearching = false
                 isInitialLoading = false
             }
-    }
-
-    fun fetchRoute(origin: LatLng, mapsApiKey: String) {
-        if (isLoadingRoute) return
-        if (mapsApiKey.isBlank()) {
-            toastMessage = "Maps API key not configured."
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        if (now - lastRouteRequestAtMs < 1200L) return
-        lastRouteRequestAtMs = now
-
-        Log.d("Route", "Starting fetchRoute from $origin")
-        data class RouteCandidate(val location: LatLng, val name: String)
-
-        fun isValidRouteLocation(location: LatLng): Boolean {
-            val lat = location.latitude
-            val lng = location.longitude
-            return lat in -90.0..90.0 && lng in -180.0..180.0 && !(lat == 0.0 && lng == 0.0)
-        }
-
-        val candidates = buildList {
-            addAll(
-                visibleGoogleRestrooms.mapNotNull { place ->
-                    place.location?.let { location ->
-                        if (isValidRouteLocation(location)) {
-                            RouteCandidate(location, place.displayName ?: "Nearest restroom")
-                        } else {
-                            null
-                        }
-                    }
-                }
-            )
-            addAll(
-                visibleCustomRestrooms.mapNotNull { custom ->
-                    val location = LatLng(custom.latitude, custom.longitude)
-                    if (isValidRouteLocation(location)) {
-                        RouteCandidate(location, custom.name.ifBlank { "Nearest restroom" })
-                    } else {
-                        null
-                    }
-                }
-            )
-        }
-
-        val orderedCandidates = candidates.distinctBy { it.location.latitude to it.location.longitude }
-            .sortedBy { candidate ->
-            distanceMeters(origin, candidate.location)
-        }
-
-        if (orderedCandidates.isEmpty()) {
-            toastMessage = "No restrooms found nearby."
-            Log.w("Route", "No valid candidates found. visibleGoogle=${visibleGoogleRestrooms.size}, visibleCustom=${visibleCustomRestrooms.size}")
-            return
-        }
-        Log.d("Route", "Found ${orderedCandidates.size} valid candidates")
-
-        isLoadingRoute = true
-        viewModelScope.launch {
-            try {
-                val routeStartTime = System.currentTimeMillis()
-                val routeRequestKey = orderedCandidates.joinToString(separator = "|") {
-                    "${it.location.latitude},${it.location.longitude}"
-                }
-                var route: RouteDetails? = null
-                var dest: LatLng? = null
-                var destName: String? = null
-
-                for ((idx, candidate) in orderedCandidates.take(6).withIndex()) {
-                    Log.d("Route", "Trying candidate $idx: ${candidate.name} at ${candidate.location}")
-                    val candidateRoute = withTimeoutOrNull(15_000L) {
-                        fetchDrivingRoute(mapsApiKey, origin, candidate.location)
-                    }
-                    if (candidateRoute != null) {
-                        route = candidateRoute
-                        dest = candidate.location
-                        destName = candidate.name
-                        Log.d("Route", "Route found for candidate $idx after ${System.currentTimeMillis() - routeStartTime}ms")
-                        break
-                    }
-                    if (dest == null) {
-                        dest = candidate.location
-                        destName = candidate.name
-                    }
-                }
-
-                if (dest != null && destName != null) {
-                    activeRouteDestinationLocation = dest
-                    activeRouteDestinationName = destName
-                    Log.d("Route", "Set destination: $destName at $dest")
-                }
-
-                if (route != null && dest != null && destName != null) {
-                    activeRoute = route
-                    Log.d("Route", "Route loaded successfully after ${System.currentTimeMillis() - routeStartTime}ms")
-                } else {
-                    activeRoute = null
-                    Log.w("Route", "Route preview unavailable after ${System.currentTimeMillis() - routeStartTime}ms for $routeRequestKey")
-                }
-            } finally {
-                isLoadingRoute = false
-            }
-        }
-    }
-
-    fun clearRoute() {
-        activeRoute = null
-        activeRouteDestinationName = null
-        activeRouteDestinationLocation = null
     }
 
     fun findAndNavigateToNearestRestroom(context: Context): String? {

@@ -33,6 +33,10 @@ import com.example.driverassist.model.dirtyLikelihoodPercent
 import com.example.driverassist.model.isClosedNow
 import com.example.driverassist.model.isDirtyNow
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
@@ -49,6 +53,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val cameraPositionState = rememberCameraPositionState()
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val placesClient = remember { Places.createClient(context) }
     val mapProperties by remember(viewModel.hasLocationPermission) {
         mutableStateOf(MapProperties(isMyLocationEnabled = viewModel.hasLocationPermission))
@@ -91,6 +96,32 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
     LaunchedEffect(Unit) {
         permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
+
+    DisposableEffect(viewModel.hasLocationPermission) {
+        var callback: LocationCallback? = null
+        if (viewModel.hasLocationPermission) {
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
+                .setMinUpdateIntervalMillis(2000)
+                .build()
+
+            callback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    result.lastLocation?.let {
+                        viewModel.userLocation = LatLng(it.latitude, it.longitude)
+                    }
+                }
+            }
+
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                callback,
+                android.os.Looper.getMainLooper()
+            )
+        }
+        onDispose {
+            callback?.let { fusedLocationClient.removeLocationUpdates(it) }
+        }
     }
 
     LaunchedEffect(cameraPositionState.isMoving) {
@@ -165,10 +196,6 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                 contentPadding = PaddingValues(bottom = 96.dp, start = 16.dp, end = 16.dp),
                 onMapLongClick = { viewModel.onMapLongClick(it) }
             ) {
-                viewModel.activeRoute?.let { route ->
-                    Polyline(points = route.points, color = Color(0xFF1E88E5), width = 14f)
-                }
-
                 // Google Places Markers
                 viewModel.visibleGoogleRestrooms.forEach { place ->
                     place.location?.let { latLng ->
@@ -220,12 +247,12 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                 )
             }
 
-            if (viewModel.bathroomLocations.isNotEmpty()) {
+            if (viewModel.visibleGoogleRestrooms.isNotEmpty() || viewModel.visibleCustomRestrooms.isNotEmpty()) {
                 Button(
                     onClick = {
                         val nearest = viewModel.findAndNavigateToNearestRestroom(context)
                         if (nearest == null) {
-                            Toast.makeText(context, "No restrooms found nearby.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "No restrooms found nearby. Check GPS.", Toast.LENGTH_SHORT).show()
                         }
                     },
                     enabled = !viewModel.isSearching,
