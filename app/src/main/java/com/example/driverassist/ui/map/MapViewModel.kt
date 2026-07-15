@@ -75,6 +75,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var restroomAggregates by mutableStateOf<Map<String, RestroomAggregate>>(emptyMap())
         private set
 
+    var searchHistory by mutableStateOf<List<String>>(listOf("Starbucks", "McDonald's", "Shell", "7-Eleven"))
+        private set
+
     val visibleGoogleRestrooms: List<Place>
         get() = bathroomLocations.filter { place ->
             val id = feedbackRepository.documentIdForPlace(place)
@@ -164,6 +167,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var newRestroomName by mutableStateOf("")
     var newRestroomCategory by mutableStateOf("Public Restroom")
     var newRestroomNote by mutableStateOf("")
+    var newRestroomNeedsPasscode by mutableStateOf(false)
 
     var selectedPlace by mutableStateOf<Place?>(null)
         private set
@@ -178,6 +182,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var selectedCleanlinessRating by mutableIntStateOf(3)
     var userNoteUpdate by mutableStateOf("")
     var userCategoryUpdate by mutableStateOf("")
+    var needsPasscodeUpdate by mutableStateOf(false)
     var markedDirtyUpdate by mutableStateOf(false)
     var markedClosedUpdate by mutableStateOf(false)
 
@@ -212,6 +217,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         selectedCleanlinessRating = 3
         userNoteUpdate = ""
         userCategoryUpdate = ""
+        needsPasscodeUpdate = false
         markedDirtyUpdate = false
         markedClosedUpdate = false
     }
@@ -223,6 +229,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         selectedRestroomName = place.displayName ?: "Restroom"
         selectedRestroomLocation = place.location
         userCategoryUpdate = "" 
+        needsPasscodeUpdate = false
         
         loadFeedback(id)
     }
@@ -233,6 +240,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         selectedRestroomName = custom.name
         selectedRestroomLocation = LatLng(custom.latitude, custom.longitude)
         userCategoryUpdate = custom.category
+        needsPasscodeUpdate = custom.needsPasscode
         
         loadFeedback(custom.id)
     }
@@ -243,6 +251,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         selectedCleanlinessRating = 3
         markedDirtyUpdate = false
         markedClosedUpdate = false
+        needsPasscodeUpdate = false
         isLoadingFeedback = true
 
         viewModelScope.launch {
@@ -253,10 +262,34 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 if (aggregate?.suggestedCategory?.isNotBlank() == true) {
                     userCategoryUpdate = aggregate.suggestedCategory
                 }
+                needsPasscodeUpdate = aggregate?.needsPasscode ?: false
             }.onFailure { error ->
                 feedbackErrorMessage = error.message ?: "Unable to load community status right now."
             }
             isLoadingFeedback = false
+        }
+    }
+
+    fun flagAsIncorrect() {
+        val id = selectedRestroomId ?: return
+        val name = selectedRestroomName ?: "Restroom"
+        
+        isSubmittingFeedback = true
+        viewModelScope.launch {
+            runCatching {
+                feedbackRepository.submitReport(
+                    id = id,
+                    name = name,
+                    report = RestroomReportInput(markedIncorrect = true)
+                )
+            }.onSuccess {
+                toastMessage = "Reported as incorrect. This location will be hidden for others."
+                incorrectRestroomIds = (incorrectRestroomIds + id).toSet()
+                clearSelectedPlace()
+            }.onFailure {
+                toastMessage = "Unable to process request."
+            }
+            isSubmittingFeedback = false
         }
     }
 
@@ -284,12 +317,14 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                         markedDirty = markedDirtyUpdate,
                         markedClosed = markedClosedUpdate,
                         note = note,
-                        suggestedCategory = category
+                        suggestedCategory = category,
+                        needsPasscode = needsPasscodeUpdate
                     )
                 )
             }.onSuccess { updated ->
                 selectedAggregate = updated
                 userNoteUpdate = ""
+                // We keep the passcode visible in the state
                 markedDirtyUpdate = false
                 markedClosedUpdate = false
                 toastMessage = "Update saved."
@@ -319,6 +354,14 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     fun searchForBathrooms(placesClient: PlacesClient, center: LatLng, query: String) {
         isSearching = true
         Log.d("Search", "Starting search for '$query' at $center")
+
+        // Update search history if user is verified
+        if (userProfile?.isVerifiedUser == true && query.isNotBlank() && !restroomTypes.contains(query)) {
+            val currentHistory = searchHistory.toMutableList()
+            currentHistory.remove(query) // Remove if exists to move to front
+            currentHistory.add(0, query)
+            searchHistory = currentHistory.take(10) // Keep last 10
+        }
         
         // Fetch custom restrooms, incorrect IDs, and category overrides from Firestore
         viewModelScope.launch {
@@ -429,6 +472,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         newRestroomName = ""
         newRestroomCategory = selectedType // Default to current filter
         newRestroomNote = ""
+        newRestroomNeedsPasscode = false
     }
 
     fun saveCustomRestroom() {
@@ -436,11 +480,12 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         val name = newRestroomName.ifBlank { "New Restroom" }
         val category = newRestroomCategory
         val note = newRestroomNote
+        val needsPasscode = newRestroomNeedsPasscode
         
         isSearching = true // Reuse as loading state
         viewModelScope.launch {
             runCatching {
-                feedbackRepository.saveCustomRestroom(name, category, note, location)
+                feedbackRepository.saveCustomRestroom(name, category, note, location, needsPasscode)
             }.onSuccess { id ->
                 toastMessage = "Restroom added to community map!"
                 pendingNewRestroomLocation = null

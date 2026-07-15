@@ -9,25 +9,24 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.driverassist.model.CustomRestroom
 import com.example.driverassist.model.RestroomAggregate
 import com.example.driverassist.model.dirtyLikelihoodPercent
 import com.example.driverassist.model.isClosedNow
@@ -130,7 +129,27 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
     var showAccountDialog by remember { mutableStateOf(false) }
 
-    Scaffold(
+    val sheetState = rememberStandardBottomSheetState(
+        initialValue = SheetValue.PartiallyExpanded
+    )
+    val scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState)
+
+    BottomSheetScaffold(
+        scaffoldState = scaffoldState,
+        sheetPeekHeight = 120.dp,
+        sheetContent = {
+            RestroomListView(
+                viewModel = viewModel,
+                onRestroomClick = { latLng, place, custom ->
+                    coroutineScope.launch {
+                        cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(latLng, 17f))
+                        if (place != null) viewModel.loadFeedbackForPlace(place)
+                        else if (custom != null) viewModel.loadFeedbackForCustom(custom)
+                        sheetState.partialExpand()
+                    }
+                }
+            )
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -185,6 +204,48 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                 )
             )
+
+            if (viewModel.userProfile?.isVerifiedUser == true && viewModel.searchHistory.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    tonalElevation = 1.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            item {
+                                Text(
+                                    "Recents:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                            }
+                            items(viewModel.searchHistory) { query ->
+                                AssistChip(
+                                    onClick = {
+                                        viewModel.searchForBathrooms(
+                                            placesClient,
+                                            cameraPositionState.position.target,
+                                            query
+                                        )
+                                    },
+                                    label = { Text(query, style = MaterialTheme.typography.bodySmall) },
+                                    leadingIcon = { Icon(Icons.Default.History, null, modifier = Modifier.size(14.dp)) },
+                                    border = null,
+                                    colors = AssistChipDefaults.assistChipColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
@@ -287,6 +348,26 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                             } else {
                                 viewModel.selectedAggregate?.let { agg ->
                                     RestroomAggregateSummary(aggregate = agg)
+                                    if (agg.needsPasscode) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                                            shape = MaterialTheme.shapes.small,
+                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(
+                                                    text = "Passcode required for this location",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
                                     if (agg.note.isNotBlank()) {
                                         Surface(
                                             color = MaterialTheme.colorScheme.secondaryContainer,
@@ -333,6 +414,17 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                                         placeholder = { Text("e.g. Back of the restaurant") },
                                         modifier = Modifier.fillMaxWidth()
                                     )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = viewModel.needsPasscodeUpdate,
+                                            onCheckedChange = { viewModel.needsPasscodeUpdate = it }
+                                        )
+                                        Text("Needs Passcode", style = MaterialTheme.typography.bodyMedium)
+                                    }
 
                                     Text("Change Category", style = MaterialTheme.typography.labelLarge)
                                     var isDropdownExpanded by remember { mutableStateOf(false) }
@@ -423,6 +515,20 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
                                 Divider(modifier = Modifier.padding(vertical = 8.dp))
 
+                                Button(
+                                    onClick = { viewModel.flagAsIncorrect() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                    ),
+                                    enabled = !viewModel.isSubmittingFeedback
+                                ) {
+                                    Icon(Icons.Default.LocationOff, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("No Public Restroom Here")
+                                }
+
                                 TextButton(
                                     onClick = { viewModel.deleteRestroom() },
                                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -479,6 +585,17 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                                 placeholder = { Text("e.g. Inside Hector's Mariscos") },
                                 modifier = Modifier.fillMaxWidth()
                             )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = viewModel.newRestroomNeedsPasscode,
+                                    onCheckedChange = { viewModel.newRestroomNeedsPasscode = it }
+                                )
+                                Text("Needs Passcode", style = MaterialTheme.typography.bodyMedium)
+                            }
                             
                             Text("Category", style = MaterialTheme.typography.labelLarge)
                             var isAddDropdownExpanded by remember { mutableStateOf(false) }
@@ -628,10 +745,10 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                     }
                 }
             )
-            }
         }
+    }
 
-        if (viewModel.isInitialLoading) {
+    if (viewModel.isInitialLoading) {
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background
@@ -651,6 +768,202 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RestroomListView(
+    viewModel: MapViewModel,
+    onRestroomClick: (LatLng, com.google.android.libraries.places.api.model.Place?, CustomRestroom?) -> Unit
+) {
+    val googleRestrooms = viewModel.visibleGoogleRestrooms
+    val customRestrooms = viewModel.visibleCustomRestrooms
+    val userLocation = viewModel.userLocation
+
+    // Combine and sort by distance if location is available, then limit to 10
+    val combinedList = remember(googleRestrooms, customRestrooms, userLocation) {
+        val list = mutableListOf<RestroomListItemData>()
+        
+        googleRestrooms.forEach { place ->
+            place.location?.let { loc ->
+                list.add(RestroomListItemData(
+                    id = place.id ?: "",
+                    name = place.displayName ?: "Restroom",
+                    location = loc,
+                    category = viewModel.selectedType,
+                    googlePlace = place
+                ))
+            }
+        }
+        
+        customRestrooms.forEach { custom ->
+            list.add(RestroomListItemData(
+                id = custom.id,
+                name = custom.name,
+                location = LatLng(custom.latitude, custom.longitude),
+                category = custom.category,
+                customRestroom = custom
+            ))
+        }
+
+        if (userLocation != null) {
+            list.sortedBy { com.example.driverassist.util.distanceMeters(userLocation, it.location) }
+                .take(10)
+        } else {
+            list.take(10)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxHeight(0.8f).padding(horizontal = 16.dp)) {
+        Text(
+            text = "Nearby Restrooms",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+        
+        if (combinedList.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No restrooms found in this area.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                items(combinedList) { item ->
+                    RestroomRow(
+                        item = item,
+                        aggregate = viewModel.restroomAggregates[item.id],
+                        userLocation = userLocation,
+                        onClick = { onRestroomClick(item.location, item.googlePlace, item.customRestroom) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+data class RestroomListItemData(
+    val id: String,
+    val name: String,
+    val location: LatLng,
+    val category: String,
+    val googlePlace: com.google.android.libraries.places.api.model.Place? = null,
+    val customRestroom: CustomRestroom? = null
+)
+
+@Composable
+fun RestroomRow(
+    item: RestroomListItemData,
+    aggregate: com.example.driverassist.model.RestroomAggregate?,
+    userLocation: LatLng?,
+    onClick: () -> Unit
+) {
+    val distance = if (userLocation != null) {
+        com.example.driverassist.util.distanceMeters(userLocation, item.location)
+    } else null
+
+    val now = System.currentTimeMillis()
+    val isDirty = aggregate?.isDirtyNow(now) == true
+    val isClosed = aggregate?.isClosedNow(now) == true
+
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Icon based on category
+            val icon = when {
+                item.category.contains("coffee", ignoreCase = true) -> Icons.Default.Coffee
+                item.category.contains("gas", ignoreCase = true) -> Icons.Default.LocalGasStation
+                item.category.contains("food", ignoreCase = true) || item.category.contains("restaurant", ignoreCase = true) -> Icons.Default.Restaurant
+                item.category.contains("mall", ignoreCase = true) -> Icons.Default.Store
+                else -> Icons.Default.Wc
+            }
+            
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = androidx.compose.foundation.shape.CircleShape,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (distance != null) {
+                        Text(" • ", style = MaterialTheme.typography.bodySmall)
+                        Text("${String.format("%.1f", distance / 1000.0)} km", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                
+                if (isDirty || isClosed) {
+                    Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (isDirty) Badge(containerColor = MaterialTheme.colorScheme.errorContainer) { Text("Dirty", color = MaterialTheme.colorScheme.onErrorContainer) }
+                        if (isClosed) Badge(containerColor = MaterialTheme.colorScheme.error) { Text("Closed", color = Color.White) }
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (aggregate != null) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (aggregate.needsPasscode) {
+                                Icon(
+                                    imageVector = Icons.Default.VpnKey,
+                                    contentDescription = "Passcode Required",
+                                    modifier = Modifier.size(16.dp).padding(end = 4.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (aggregate.ratingCount > 0) {
+                                Text(
+                                    text = String.format(Locale.US, "%.1f", aggregate.avgCleanliness),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = if (aggregate.avgCleanliness >= 3.5) Color(0xFF2E7D32) else if (aggregate.avgCleanliness >= 2.5) Color(0xFFF57C00) else MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                        if (aggregate.ratingCount > 0) {
+                            Text("Rating", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (aggregate.needsPasscode) {
+                            Text("Passcode", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                }
+
+                val context = LocalContext.current
+                IconButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${item.location.latitude},${item.location.longitude}")).apply {
+                            setPackage("com.google.android.apps.maps")
+                        }
+                        context.startActivity(intent)
+                    },
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(Icons.Default.Navigation, contentDescription = "Navigate", modifier = Modifier.size(24.dp))
                 }
             }
         }

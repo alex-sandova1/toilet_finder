@@ -33,7 +33,7 @@ class RestroomFeedbackRepository(
         return results
     }
 
-    suspend fun saveCustomRestroom(name: String, category: String, note: String, latLng: LatLng): String {
+    suspend fun saveCustomRestroom(name: String, category: String, note: String, latLng: LatLng, needsPasscode: Boolean = false): String {
         val userId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "anonymous"
         val docRef = customBathroomsCollection.document()
         val custom = com.example.driverassist.model.CustomRestroom(
@@ -43,6 +43,7 @@ class RestroomFeedbackRepository(
             note = note,
             latitude = latLng.latitude,
             longitude = latLng.longitude,
+            needsPasscode = needsPasscode,
             addedByUserId = userId
         )
         docRef.set(custom).await()

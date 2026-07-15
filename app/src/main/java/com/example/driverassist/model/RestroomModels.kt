@@ -15,7 +15,8 @@ data class RestroomAggregate(
     val lastUpdatedEpochMillis: Long = 0L,
     val isMarkedIncorrect: Boolean = false,
     val note: String = "",
-    val suggestedCategory: String = ""
+    val suggestedCategory: String = "",
+    val needsPasscode: Boolean = false
 )
 
 // Represents one community update submission.
@@ -25,7 +26,8 @@ data class RestroomReportInput(
     val markedClosed: Boolean = false,
     val markedIncorrect: Boolean = false,
     val note: String? = null,
-    val suggestedCategory: String? = null
+    val suggestedCategory: String? = null,
+    val needsPasscode: Boolean? = null
 )
 
 private const val DEFAULT_DIRTY_ALERT_DURATION_MILLIS = 3 * 60 * 60 * 1000L
@@ -71,7 +73,8 @@ fun mergeRestroomAggregate(
         lastUpdatedEpochMillis = nowMillis,
         isMarkedIncorrect = current.isMarkedIncorrect || report.markedIncorrect,
         note = report.note ?: current.note,
-        suggestedCategory = report.suggestedCategory ?: current.suggestedCategory
+        suggestedCategory = report.suggestedCategory ?: current.suggestedCategory,
+        needsPasscode = report.needsPasscode ?: current.needsPasscode
     )
 }
 
@@ -96,6 +99,7 @@ data class CustomRestroom(
     val longitude: Double = 0.0,
     val isDeleted: Boolean = false,
     val note: String = "",
+    val needsPasscode: Boolean = false,
     val addedByUserId: String = "anonymous",
     val timestamp: Long = System.currentTimeMillis()
 )
