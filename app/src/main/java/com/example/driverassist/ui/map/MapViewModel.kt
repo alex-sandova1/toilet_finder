@@ -168,6 +168,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var newRestroomCategory by mutableStateOf("Public Restroom")
     var newRestroomNote by mutableStateOf("")
     var newRestroomNeedsPasscode by mutableStateOf(false)
+    var newRestroomIsTruckFriendly by mutableStateOf(false)
 
     var selectedPlace by mutableStateOf<Place?>(null)
         private set
@@ -183,6 +184,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var userNoteUpdate by mutableStateOf("")
     var userCategoryUpdate by mutableStateOf("")
     var needsPasscodeUpdate by mutableStateOf(false)
+    var isTruckFriendlyUpdate by mutableStateOf(false)
     var markedDirtyUpdate by mutableStateOf(false)
     var markedClosedUpdate by mutableStateOf(false)
 
@@ -218,6 +220,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         userNoteUpdate = ""
         userCategoryUpdate = ""
         needsPasscodeUpdate = false
+        isTruckFriendlyUpdate = false
         markedDirtyUpdate = false
         markedClosedUpdate = false
     }
@@ -230,6 +233,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         selectedRestroomLocation = place.location
         userCategoryUpdate = "" 
         needsPasscodeUpdate = false
+        isTruckFriendlyUpdate = false
         
         loadFeedback(id)
     }
@@ -241,6 +245,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         selectedRestroomLocation = LatLng(custom.latitude, custom.longitude)
         userCategoryUpdate = custom.category
         needsPasscodeUpdate = custom.needsPasscode
+        isTruckFriendlyUpdate = custom.isTruckFriendly
         
         loadFeedback(custom.id)
     }
@@ -263,6 +268,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                     userCategoryUpdate = aggregate.suggestedCategory
                 }
                 needsPasscodeUpdate = aggregate?.needsPasscode ?: false
+                isTruckFriendlyUpdate = aggregate?.isTruckFriendly ?: false
             }.onFailure { error ->
                 feedbackErrorMessage = error.message ?: "Unable to load community status right now."
             }
@@ -286,6 +292,36 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 toastMessage = "Reported as incorrect. This location will be hidden for others."
                 incorrectRestroomIds = (incorrectRestroomIds + id).toSet()
                 clearSelectedPlace()
+            }.onFailure {
+                toastMessage = "Unable to process request."
+            }
+            isSubmittingFeedback = false
+        }
+    }
+
+    fun confirmStillClean() {
+        val id = selectedRestroomId ?: return
+        val name = selectedRestroomName ?: "Restroom"
+        
+        isSubmittingFeedback = true
+        viewModelScope.launch {
+            runCatching {
+                feedbackRepository.submitReport(
+                    id = id,
+                    name = name,
+                    report = RestroomReportInput(
+                        cleanlinessRating = 5, // High signal
+                        markedDirty = false,
+                        markedClosed = false,
+                        isVerified = true
+                    )
+                )
+            }.onSuccess { updated ->
+                selectedAggregate = updated
+                restroomAggregates = restroomAggregates.toMutableMap().apply {
+                    put(id, updated)
+                }
+                toastMessage = "Confirmed clean! Thanks for helping."
             }.onFailure {
                 toastMessage = "Unable to process request."
             }
@@ -318,7 +354,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                         markedClosed = markedClosedUpdate,
                         note = note,
                         suggestedCategory = category,
-                        needsPasscode = needsPasscodeUpdate
+                        needsPasscode = needsPasscodeUpdate,
+                        isVerified = true, // Any user feedback counts as verification
+                        isTruckFriendly = isTruckFriendlyUpdate
                     )
                 )
             }.onSuccess { updated ->
@@ -473,6 +511,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         newRestroomCategory = selectedType // Default to current filter
         newRestroomNote = ""
         newRestroomNeedsPasscode = false
+        newRestroomIsTruckFriendly = false
     }
 
     fun saveCustomRestroom() {
@@ -481,11 +520,12 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         val category = newRestroomCategory
         val note = newRestroomNote
         val needsPasscode = newRestroomNeedsPasscode
+        val isTruckFriendly = newRestroomIsTruckFriendly
         
         isSearching = true // Reuse as loading state
         viewModelScope.launch {
             runCatching {
-                feedbackRepository.saveCustomRestroom(name, category, note, location, needsPasscode)
+                feedbackRepository.saveCustomRestroom(name, category, note, location, needsPasscode, isTruckFriendly)
             }.onSuccess { id ->
                 toastMessage = "Restroom added to community map!"
                 pendingNewRestroomLocation = null

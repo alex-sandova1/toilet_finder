@@ -16,7 +16,9 @@ data class RestroomAggregate(
     val isMarkedIncorrect: Boolean = false,
     val note: String = "",
     val suggestedCategory: String = "",
-    val needsPasscode: Boolean = false
+    val needsPasscode: Boolean = false,
+    val lastVerifiedEpochMillis: Long = 0L,
+    val isTruckFriendly: Boolean = false
 )
 
 // Represents one community update submission.
@@ -27,11 +29,14 @@ data class RestroomReportInput(
     val markedIncorrect: Boolean = false,
     val note: String? = null,
     val suggestedCategory: String? = null,
-    val needsPasscode: Boolean? = null
+    val needsPasscode: Boolean? = null,
+    val isVerified: Boolean = false,
+    val isTruckFriendly: Boolean? = null
 )
 
 private const val DEFAULT_DIRTY_ALERT_DURATION_MILLIS = 3 * 60 * 60 * 1000L
 private const val DEFAULT_CLOSED_ALERT_DURATION_MILLIS = 2 * 60 * 60 * 1000L
+private const val VERIFICATION_EXPIRY_MILLIS = 8 * 60 * 60 * 1000L // 8 hour shift
 
 // Merges a new report into the aggregate restroom document.
 fun mergeRestroomAggregate(
@@ -59,6 +64,8 @@ fun mergeRestroomAggregate(
         maxOf(current.closedUntilEpochMillis, nowMillis + closedAlertDurationMillis)
     } else current.closedUntilEpochMillis
 
+    val nextVerifiedAt = if (report.isVerified) nowMillis else current.lastVerifiedEpochMillis
+
     return current.copy(
         placeId = placeId,
         placeName = if (placeName.isBlank()) current.placeName else placeName,
@@ -74,9 +81,15 @@ fun mergeRestroomAggregate(
         isMarkedIncorrect = current.isMarkedIncorrect || report.markedIncorrect,
         note = report.note ?: current.note,
         suggestedCategory = report.suggestedCategory ?: current.suggestedCategory,
-        needsPasscode = report.needsPasscode ?: current.needsPasscode
+        needsPasscode = report.needsPasscode ?: current.needsPasscode,
+        lastVerifiedEpochMillis = nextVerifiedAt,
+        isTruckFriendly = report.isTruckFriendly ?: current.isTruckFriendly
     )
 }
+
+// Returns true when a verification is still considered "recent" (within 8 hours).
+fun RestroomAggregate.isRecentlyVerified(nowMillis: Long = System.currentTimeMillis()): Boolean =
+    (nowMillis - lastVerifiedEpochMillis) < VERIFICATION_EXPIRY_MILLIS && lastVerifiedEpochMillis > 0
 
 // Returns true when a temporary dirty alert is still active.
 fun RestroomAggregate.isDirtyNow(nowMillis: Long = System.currentTimeMillis()): Boolean =
@@ -100,6 +113,7 @@ data class CustomRestroom(
     val isDeleted: Boolean = false,
     val note: String = "",
     val needsPasscode: Boolean = false,
+    val isTruckFriendly: Boolean = false,
     val addedByUserId: String = "anonymous",
     val timestamp: Long = System.currentTimeMillis()
 )

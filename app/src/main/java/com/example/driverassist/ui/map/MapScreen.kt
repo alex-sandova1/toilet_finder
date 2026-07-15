@@ -31,6 +31,7 @@ import com.example.driverassist.model.RestroomAggregate
 import com.example.driverassist.model.dirtyLikelihoodPercent
 import com.example.driverassist.model.isClosedNow
 import com.example.driverassist.model.isDirtyNow
+import com.example.driverassist.model.isRecentlyVerified
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.location.LocationRequest
@@ -58,7 +59,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
         mutableStateOf(MapProperties(isMyLocationEnabled = viewModel.hasLocationPermission))
     }
     val mapUiSettings by remember {
-        mutableStateOf(MapUiSettings(zoomControlsEnabled = true, myLocationButtonEnabled = false))
+        mutableStateOf(MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false))
     }
 
     // Observe toast messages from ViewModel
@@ -136,7 +137,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
     BottomSheetScaffold(
         scaffoldState = scaffoldState,
-        sheetPeekHeight = 120.dp,
+        sheetPeekHeight = 60.dp,
         sheetContent = {
             RestroomListView(
                 viewModel = viewModel,
@@ -254,7 +255,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                 cameraPositionState = cameraPositionState,
                 properties = mapProperties,
                 uiSettings = mapUiSettings,
-                contentPadding = PaddingValues(bottom = 96.dp, start = 16.dp, end = 16.dp),
+                contentPadding = PaddingValues(bottom = 64.dp, start = 16.dp, end = 16.dp),
                 onMapLongClick = { viewModel.onMapLongClick(it) }
             ) {
                 // Google Places Markers
@@ -302,7 +303,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                     icon = { Icon(Icons.Default.Search, contentDescription = null) },
                     text = { Text(if (viewModel.isSearching) "Searching..." else "Search this area") },
                     expanded = !viewModel.isSearching,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 120.dp),
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
@@ -317,7 +318,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                         }
                     },
                     enabled = !viewModel.isSearching,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp)
                 ) {
                     Text("Navigate to nearest restroom")
                 }
@@ -348,195 +349,137 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                             } else {
                                 viewModel.selectedAggregate?.let { agg ->
                                     RestroomAggregateSummary(aggregate = agg)
-                                    if (agg.needsPasscode) {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.tertiaryContainer,
-                                            shape = MaterialTheme.shapes.small,
-                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                    
+                                    if (agg.needsPasscode || agg.isTruckFriendly) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Row(
-                                                modifier = Modifier.padding(8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                Spacer(Modifier.width(8.dp))
-                                                Text(
-                                                    text = "Passcode required for this location",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
+                                            if (agg.needsPasscode) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                                                    shape = MaterialTheme.shapes.small,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(Icons.Default.VpnKey, null, modifier = Modifier.size(16.dp))
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text("Code Required", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                }
+                                            }
+                                            if (agg.isTruckFriendly) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                                    shape = MaterialTheme.shapes.small,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(Icons.Default.LocalShipping, null, modifier = Modifier.size(16.dp))
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text("Truck Friendly", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+
                                     if (agg.note.isNotBlank()) {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.secondaryContainer,
-                                            shape = MaterialTheme.shapes.small,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text(
-                                                text = "Note: ${agg.note}",
-                                                modifier = Modifier.padding(8.dp),
-                                                style = MaterialTheme.typography.bodyMedium
-                                            )
-                                        }
+                                        Text(
+                                            text = "Note: ${agg.note}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.padding(vertical = 4.dp)
+                                        )
                                     }
-                                } ?: Text("No community reports yet. You can add the first rating or status update.")
+                                } ?: Text("No community reports yet.")
 
                                 viewModel.feedbackErrorMessage?.let {
                                     Text(text = it, color = MaterialTheme.colorScheme.error)
                                 }
 
                                 if (!showFeedbackInputs) {
-                                    Button(
-                                        onClick = { showFeedbackInputs = true },
+                                    Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Rate or Update Status")
+                                        Button(
+                                            onClick = { viewModel.confirmStillClean() },
+                                            modifier = Modifier.weight(1f),
+                                            enabled = !viewModel.isSubmittingFeedback,
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                                        ) {
+                                            Icon(Icons.Default.ThumbUp, null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Still Clean")
+                                        }
+
+                                        Button(
+                                            onClick = { showFeedbackInputs = true },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        ) {
+                                            Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Update")
+                                        }
                                     }
                                 } else {
-                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
-                                    Text(
-                                        text = "Update status or add a note:",
-                                        style = MaterialTheme.typography.titleSmall
-                                    )
-
                                     OutlinedTextField(
                                         value = viewModel.userNoteUpdate,
                                         onValueChange = { viewModel.userNoteUpdate = it },
-                                        label = { Text("Add/Update Note") },
-                                        placeholder = { Text("e.g. Back of the restaurant") },
+                                        label = { Text("Note") },
                                         modifier = Modifier.fillMaxWidth()
                                     )
 
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Checkbox(
-                                            checked = viewModel.needsPasscodeUpdate,
-                                            onCheckedChange = { viewModel.needsPasscodeUpdate = it }
-                                        )
-                                        Text("Needs Passcode", style = MaterialTheme.typography.bodyMedium)
-                                    }
-
-                                    Text("Change Category", style = MaterialTheme.typography.labelLarge)
-                                    var isDropdownExpanded by remember { mutableStateOf(false) }
-
-                                    ExposedDropdownMenuBox(
-                                        expanded = isDropdownExpanded,
-                                        onExpandedChange = { isDropdownExpanded = !isDropdownExpanded },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        OutlinedTextField(
-                                            value = viewModel.userCategoryUpdate,
-                                            onValueChange = {},
-                                            readOnly = true,
-                                            label = { Text("Category") },
-                                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded) },
-                                            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
-                                        )
-                                        ExposedDropdownMenu(
-                                            expanded = isDropdownExpanded,
-                                            onDismissRequest = { isDropdownExpanded = false }
-                                        ) {
-                                            viewModel.restroomTypes.forEach { type ->
-                                                DropdownMenuItem(
-                                                    text = { Text(type) },
-                                                    onClick = {
-                                                        viewModel.userCategoryUpdate = type
-                                                        isDropdownExpanded = false
-                                                    },
-                                                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                                                )
-                                            }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Checkbox(checked = viewModel.needsPasscodeUpdate, onCheckedChange = { viewModel.needsPasscodeUpdate = it })
+                                            Text("Passcode", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Checkbox(checked = viewModel.isTruckFriendlyUpdate, onCheckedChange = { viewModel.isTruckFriendlyUpdate = it })
+                                            Text("Truck Friendly", style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
 
-                                    Text(
-                                        text = "Rate how likely this restroom is to be dirty over time. 1 means very likely dirty, 5 means usually clean.",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
                                     CleanlinessRatingRow(
                                         selectedRating = viewModel.selectedCleanlinessRating,
                                         onRatingSelected = { viewModel.selectedCleanlinessRating = it }
                                     )
 
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(
-                                        selected = viewModel.markedDirtyUpdate,
-                                        onClick = { viewModel.markedDirtyUpdate = !viewModel.markedDirtyUpdate },
-                                        label = { Text("Dirty now") },
-                                        enabled = !viewModel.isSubmittingFeedback
-                                    )
-                                    FilterChip(
-                                        selected = viewModel.markedClosedUpdate,
-                                        onClick = { viewModel.markedClosedUpdate = !viewModel.markedClosedUpdate },
-                                        label = { Text("Closed now") },
-                                        enabled = !viewModel.isSubmittingFeedback
-                                    )
-                                }
+                                        FilterChip(selected = viewModel.markedDirtyUpdate, onClick = { viewModel.markedDirtyUpdate = !viewModel.markedDirtyUpdate }, label = { Text("Dirty Now") })
+                                        FilterChip(selected = viewModel.markedClosedUpdate, onClick = { viewModel.markedClosedUpdate = !viewModel.markedClosedUpdate }, label = { Text("Closed Now") })
+                                    }
 
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilledTonalButton(
-                                        onClick = { 
-                                            viewModel.submitFeedback(includeRating = true)
-                                            showFeedbackInputs = false
-                                        },
-                                        enabled = !viewModel.isSubmittingFeedback
-                                    ) {
-                                        val label = if (viewModel.userNoteUpdate.isNotBlank() || viewModel.markedDirtyUpdate || viewModel.markedClosedUpdate) {
-                                            "Save Update"
-                                        } else {
-                                            "Save Rating"
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(onClick = { viewModel.submitFeedback(true); showFeedbackInputs = false }, modifier = Modifier.weight(1f)) {
+                                            Text("Save")
                                         }
-                                        Text(label)
+                                        TextButton(onClick = { showFeedbackInputs = false }) { Text("Cancel") }
                                     }
-                                    
-                                    TextButton(onClick = { showFeedbackInputs = false }) {
-                                        Text("Cancel")
-                                    }
-                                }
                                 }
 
                                 if (viewModel.isSubmittingFeedback) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                                        Text("Saving update…")
-                                    }
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                                 }
 
-                                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                                Divider(modifier = Modifier.padding(vertical = 4.dp))
 
                                 Button(
                                     onClick = { viewModel.flagAsIncorrect() },
                                     modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                                    ),
-                                    enabled = !viewModel.isSubmittingFeedback
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
                                 ) {
-                                    Icon(Icons.Default.LocationOff, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.LocationOff, null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("No Public Restroom Here")
-                                }
-
-                                TextButton(
-                                    onClick = { viewModel.deleteRestroom() },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                                    modifier = Modifier.align(Alignment.End),
-                                    enabled = !viewModel.isSubmittingFeedback
-                                ) {
-                                    val label = if (viewModel.selectedPlace == null) "Delete Restroom" else "Report as Incorrect"
-                                    Text(label)
+                                    Text("Not a Restroom")
                                 }
                             }
                         }
@@ -586,15 +529,21 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                                 modifier = Modifier.fillMaxWidth()
                             )
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = viewModel.newRestroomNeedsPasscode,
-                                    onCheckedChange = { viewModel.newRestroomNeedsPasscode = it }
-                                )
-                                Text("Needs Passcode", style = MaterialTheme.typography.bodyMedium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = viewModel.newRestroomNeedsPasscode,
+                                        onCheckedChange = { viewModel.newRestroomNeedsPasscode = it }
+                                    )
+                                    Text("Passcode", style = MaterialTheme.typography.bodySmall)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = viewModel.newRestroomIsTruckFriendly,
+                                        onCheckedChange = { viewModel.newRestroomIsTruckFriendly = it }
+                                    )
+                                    Text("Truck Friendly", style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                             
                             Text("Category", style = MaterialTheme.typography.labelLarge)
@@ -648,6 +597,39 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                 )
             }
 
+            // Custom Zoom Controls on the left
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 140.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            cameraPositionState.animate(CameraUpdateFactory.zoomIn())
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    shape = androidx.compose.foundation.shape.CircleShape
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Zoom In")
+                }
+                SmallFloatingActionButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            cameraPositionState.animate(CameraUpdateFactory.zoomOut())
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    shape = androidx.compose.foundation.shape.CircleShape
+                ) {
+                    Icon(Icons.Default.Remove, contentDescription = "Zoom Out")
+                }
+            }
+
             // Custom My Location button positioned near zoom controls.
             FloatingActionButton(
                 onClick = {
@@ -659,7 +641,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 12.dp, bottom = 200.dp),
+                    .padding(end = 12.dp, bottom = 140.dp),
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.primary,
                 shape = androidx.compose.foundation.shape.CircleShape
@@ -869,16 +851,18 @@ fun RestroomRow(
     val now = System.currentTimeMillis()
     val isDirty = aggregate?.isDirtyNow(now) == true
     val isClosed = aggregate?.isClosedNow(now) == true
+    val isRecentlyVerified = aggregate?.isRecentlyVerified(now) == true
 
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Icon based on category
@@ -890,64 +874,82 @@ fun RestroomRow(
                 else -> Icons.Default.Wc
             }
             
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = androidx.compose.foundation.shape.CircleShape,
-                modifier = Modifier.size(40.dp)
+            Box(
+                modifier = Modifier.size(36.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
+                Icon(
+                    icon, 
+                    contentDescription = null, 
+                    modifier = Modifier.size(20.dp), 
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    item.name, 
+                    style = MaterialTheme.typography.titleSmall, 
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(item.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (distance != null) {
-                        Text(" • ", style = MaterialTheme.typography.bodySmall)
-                        Text("${String.format("%.1f", distance / 1000.0)} km", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "${String.format(Locale.US, "%.1f", distance / 1000.0)} km", 
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(" • ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    Text(
+                        item.category, 
+                        style = MaterialTheme.typography.bodySmall, 
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
                 }
                 
-                if (isDirty || isClosed) {
-                    Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (isDirty) Badge(containerColor = MaterialTheme.colorScheme.errorContainer) { Text("Dirty", color = MaterialTheme.colorScheme.onErrorContainer) }
-                        if (isClosed) Badge(containerColor = MaterialTheme.colorScheme.error) { Text("Closed", color = Color.White) }
+                if (isDirty || isClosed || isRecentlyVerified) {
+                    Row(modifier = Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (isRecentlyVerified) Badge(containerColor = MaterialTheme.colorScheme.tertiaryContainer) { Text("Verified", style = MaterialTheme.typography.labelSmall) }
+                        if (isDirty) Badge(containerColor = MaterialTheme.colorScheme.errorContainer) { Text("Dirty", style = MaterialTheme.typography.labelSmall) }
+                        if (isClosed) Badge(containerColor = MaterialTheme.colorScheme.error) { Text("Closed", style = MaterialTheme.typography.labelSmall) }
                     }
                 }
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (aggregate != null) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (aggregate.needsPasscode) {
-                                Icon(
-                                    imageVector = Icons.Default.VpnKey,
-                                    contentDescription = "Passcode Required",
-                                    modifier = Modifier.size(16.dp).padding(end = 4.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (aggregate.ratingCount > 0) {
-                                Text(
-                                    text = String.format(Locale.US, "%.1f", aggregate.avgCleanliness),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = if (aggregate.avgCleanliness >= 3.5) Color(0xFF2E7D32) else if (aggregate.avgCleanliness >= 2.5) Color(0xFFF57C00) else MaterialTheme.colorScheme.error
-                                )
-                            }
+                Column(horizontalAlignment = Alignment.End) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (aggregate?.needsPasscode == true) {
+                            Icon(
+                                imageVector = Icons.Default.VpnKey,
+                                contentDescription = "Passcode",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(Modifier.width(4.dp))
                         }
-                        if (aggregate.ratingCount > 0) {
-                            Text("Rating", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else if (aggregate.needsPasscode) {
-                            Text("Passcode", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (aggregate != null && aggregate.ratingCount > 0) {
+                            Text(
+                                text = String.format(Locale.US, "%.1f", aggregate.avgCleanliness),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (aggregate.avgCleanliness >= 3.5) Color(0xFF2E7D32) else if (aggregate.avgCleanliness >= 2.5) Color(0xFFF57C00) else MaterialTheme.colorScheme.error
+                            )
                         }
                     }
-                    Spacer(Modifier.width(12.dp))
+                    if (aggregate != null && aggregate.ratingCount > 0) {
+                        Text("Rating", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
+
+                Spacer(Modifier.width(8.dp))
 
                 val context = LocalContext.current
                 IconButton(
@@ -957,13 +959,14 @@ fun RestroomRow(
                         }
                         context.startActivity(intent)
                     },
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ),
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(Icons.Default.Navigation, contentDescription = "Navigate", modifier = Modifier.size(24.dp))
+                    Icon(
+                        Icons.Default.Navigation, 
+                        contentDescription = "Navigate", 
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
@@ -975,6 +978,7 @@ private fun RestroomAggregateSummary(aggregate: RestroomAggregate) {
     val nowMillis = System.currentTimeMillis()
     val statusChips = remember(aggregate, nowMillis) {
         buildList {
+            if (aggregate.isRecentlyVerified(nowMillis)) add("Recently verified")
             if (aggregate.isClosedNow(nowMillis)) add("Closed now")
             if (aggregate.isDirtyNow(nowMillis)) add("Reported dirty")
         }
