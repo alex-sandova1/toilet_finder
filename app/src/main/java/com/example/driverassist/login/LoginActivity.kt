@@ -2,10 +2,9 @@ package com.example.driverassist.login
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
+import android.util.Log
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -19,19 +18,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.driverassist.MainPage
+import com.example.driverassist.ui.components.AppLogo
 import com.example.driverassist.ui.theme.DriverAssistTheme
 import com.example.driverassist.util.printSigningFingerprint
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.ApiException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.launch
 
 class LoginActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,36 +69,18 @@ fun LoginScreen(
 ) {
     val context = LocalContext.current
     val auth = remember { FirebaseAuth.getInstance() }
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
     
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-        try {
-            val account = task.getResult(ApiException::class.java)
-            account?.idToken?.let { idToken ->
-                val credential = GoogleAuthProvider.getCredential(idToken, null)
-                auth.signInWithCredential(credential)
-                    .addOnCompleteListener { authTask ->
-                        if (authTask.isSuccessful) {
-                            authTask.result?.user?.let { viewModel.onSignInSuccess(it) }
-                            onLoginSuccess()
-                        } else {
-                            viewModel.onSignInFailure(authTask.exception?.message ?: "Firebase Auth Failed")
-                        }
-                    }
-            }
-        } catch (e: ApiException) {
-            viewModel.onSignInFailure("Google Sign-In Failed: ${e.message}")
-        }
-    }
+    // Web Client ID from Firebase Console
+    val webClientId = "769881213094-1j1ga27sro61hamdu92j2egn7bil4ke5.apps.googleusercontent.com"
 
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Driver Assist", style = MaterialTheme.typography.headlineLarge)
+        AppLogo(modifier = Modifier.padding(bottom = 32.dp))
         Spacer(modifier = Modifier.height(32.dp))
         
         if (viewModel.isLoading) {
@@ -103,14 +89,48 @@ fun LoginScreen(
             Button(
                 onClick = {
                     viewModel.setLoadingState(true)
-                    // Note: You must enable Google Sign-In in Firebase Console and use your Web Client ID here.
-                    val webClientId = "769881213094-1j1ga27sro61hamdu92j2egn7bil4ke5.apps.googleusercontent.com"
-                    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                        .requestIdToken(webClientId)
-                        .requestEmail()
+                    
+                    val googleIdOption = GetGoogleIdOption.Builder()
+                        .setFilterByAuthorizedAccounts(false)
+                        .setServerClientId(webClientId)
+                        .setAutoSelectEnabled(false)
                         .build()
-                    val googleSignInClient = GoogleSignIn.getClient(context, gso)
-                    launcher.launch(googleSignInClient.signInIntent)
+
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(googleIdOption)
+                        .build()
+
+                    coroutineScope.launch {
+                        try {
+                            val result = credentialManager.getCredential(
+                                context = context,
+                                request = request
+                            )
+                            
+                            when (val credential = result.credential) {
+                                is GoogleIdTokenCredential -> {
+                                    val idToken = credential.idToken
+                                    val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
+                                    auth.signInWithCredential(firebaseCredential)
+                                        .addOnCompleteListener { authTask ->
+                                            if (authTask.isSuccessful) {
+                                                authTask.result?.user?.let { viewModel.onSignInSuccess(it) }
+                                                onLoginSuccess()
+                                            } else {
+                                                viewModel.onSignInFailure(authTask.exception?.message ?: "Firebase Auth Failed")
+                                            }
+                                        }
+                                }
+                                else -> {
+                                    Log.e("LoginActivity", "Unexpected credential type: ${credential.type}")
+                                    viewModel.onSignInFailure("Unexpected sign-in error")
+                                }
+                            }
+                        } catch (e: GetCredentialException) {
+                            Log.e("LoginActivity", "Credential Manager error", e)
+                            viewModel.onSignInFailure("Sign-in failed: ${e.message}")
+                        }
+                    }
                 }
             ) {
                 Text(text = "Sign in with Google")
@@ -131,3 +151,6 @@ fun LoginScreen(
         }
     }
 }
+
+// Helper to fix padding import if needed (oops, I used padding instead of Modifier.padding in the TextButton)
+// Fixed in the final content above: modifier = Modifier.padding(top = 16.dp)

@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.driverassist.data.RestroomFeedbackRepository
 import com.example.driverassist.data.UserRepository
+import com.example.driverassist.data.local.FavoriteRestroom
 import com.example.driverassist.data.local.OfflineRestroom
 import com.example.driverassist.data.local.RestroomDatabase
 import com.example.driverassist.model.*
@@ -19,6 +20,7 @@ import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.android.libraries.places.api.net.SearchByTextRequest
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MapViewModel(application: android.app.Application) : AndroidViewModel(application) {
@@ -35,6 +37,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var localOfflineRestrooms by mutableStateOf<List<OfflineRestroom>>(emptyList())
         private set
 
+    var favoriteRestrooms by mutableStateOf<List<FavoriteRestroom>>(emptyList())
+        private set
+
     init {
         loadUserProfile()
         // Collect local restrooms from Room for offline access
@@ -43,12 +48,24 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 localOfflineRestrooms = localRestrooms
             }
         }
+        // Collect favorites
+        viewModelScope.launch {
+            restroomDao.getAllFavorites().collect { favorites ->
+                favoriteRestrooms = favorites
+            }
+        }
     }
 
     private fun loadUserProfile() {
         val uid = auth.currentUser?.uid ?: return
         viewModelScope.launch {
-            userProfile = userRepository.fetchUserProfile(uid)
+            runCatching {
+                userRepository.fetchUserProfile(uid)
+            }.onSuccess { profile ->
+                userProfile = profile
+            }.onFailure { error ->
+                Log.e("MapViewModel", "Failed to load user profile: ${error.message}", error)
+            }
         }
     }
 
@@ -91,6 +108,14 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                     // Filter out if reported dirty now OR if average cleanliness is poor (< 3.0)
                     if (agg.isDirtyNow(now)) return@filter false
                     if (agg.ratingCount > 0 && agg.avgCleanliness < 3.0) return@filter false
+                    
+                    // Advanced Premium Filters
+                    if (filterAccessible && !agg.isAccessible) return@filter false
+                    if (filterBabyChanging && !agg.hasBabyChanging) return@filter false
+                    if (filterSingleStall && !agg.isSingleStall) return@filter false
+                } else if (filterAccessible || filterBabyChanging || filterSingleStall) {
+                    // If filter is on but we have no data yet, hide it for safety/accuracy
+                    return@filter false
                 }
             }
 
@@ -134,6 +159,16 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                         val now = System.currentTimeMillis()
                         if (agg.isDirtyNow(now)) return@filter false
                         if (agg.ratingCount > 0 && agg.avgCleanliness < 3.0) return@filter false
+
+                        // Advanced Premium Filters
+                        if (filterAccessible && !agg.isAccessible) return@filter false
+                        if (filterBabyChanging && !agg.hasBabyChanging) return@filter false
+                        if (filterSingleStall && !agg.isSingleStall) return@filter false
+                    } else {
+                        // For custom restrooms, also check the initial definition if aggregate is missing
+                        if (filterAccessible && !custom.isAccessible) return@filter false
+                        if (filterBabyChanging && !custom.hasBabyChanging) return@filter false
+                        if (filterSingleStall && !custom.isSingleStall) return@filter false
                     }
                 }
                 
@@ -157,6 +192,11 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var isInitialLoading by mutableStateOf(true)
         private set
     var isVerifiedFilterEnabled by mutableStateOf(false)
+    
+    // Advanced Filters
+    var filterAccessible by mutableStateOf(false)
+    var filterBabyChanging by mutableStateOf(false)
+    var filterSingleStall by mutableStateOf(false)
 
     // Generic state for whatever restroom is selected
     var selectedRestroomId by mutableStateOf<String?>(null)
@@ -169,6 +209,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var newRestroomNote by mutableStateOf("")
     var newRestroomNeedsPasscode by mutableStateOf(false)
     var newRestroomIsTruckFriendly by mutableStateOf(false)
+    var newRestroomIsAccessible by mutableStateOf(false)
+    var newRestroomHasBabyChanging by mutableStateOf(false)
+    var newRestroomIsSingleStall by mutableStateOf(false)
 
     var selectedPlace by mutableStateOf<Place?>(null)
         private set
@@ -185,6 +228,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     var userCategoryUpdate by mutableStateOf("")
     var needsPasscodeUpdate by mutableStateOf(false)
     var isTruckFriendlyUpdate by mutableStateOf(false)
+    var isAccessibleUpdate by mutableStateOf(false)
+    var hasBabyChangingUpdate by mutableStateOf(false)
+    var isSingleStallUpdate by mutableStateOf(false)
     var markedDirtyUpdate by mutableStateOf(false)
     var markedClosedUpdate by mutableStateOf(false)
 
@@ -221,6 +267,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         userCategoryUpdate = ""
         needsPasscodeUpdate = false
         isTruckFriendlyUpdate = false
+        isAccessibleUpdate = false
+        hasBabyChangingUpdate = false
+        isSingleStallUpdate = false
         markedDirtyUpdate = false
         markedClosedUpdate = false
     }
@@ -234,6 +283,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         userCategoryUpdate = "" 
         needsPasscodeUpdate = false
         isTruckFriendlyUpdate = false
+        isAccessibleUpdate = false
+        hasBabyChangingUpdate = false
+        isSingleStallUpdate = false
         
         loadFeedback(id)
     }
@@ -246,6 +298,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         userCategoryUpdate = custom.category
         needsPasscodeUpdate = custom.needsPasscode
         isTruckFriendlyUpdate = custom.isTruckFriendly
+        isAccessibleUpdate = custom.isAccessible
+        hasBabyChangingUpdate = custom.hasBabyChanging
+        isSingleStallUpdate = custom.isSingleStall
         
         loadFeedback(custom.id)
     }
@@ -269,6 +324,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 }
                 needsPasscodeUpdate = aggregate?.needsPasscode ?: false
                 isTruckFriendlyUpdate = aggregate?.isTruckFriendly ?: false
+                isAccessibleUpdate = aggregate?.isAccessible ?: false
+                hasBabyChangingUpdate = aggregate?.hasBabyChanging ?: false
+                isSingleStallUpdate = aggregate?.isSingleStall ?: false
             }.onFailure { error ->
                 feedbackErrorMessage = error.message ?: "Unable to load community status right now."
             }
@@ -322,6 +380,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                     put(id, updated)
                 }
                 toastMessage = "Confirmed clean! Thanks for helping."
+                loadUserProfile() // Refresh stats
             }.onFailure {
                 toastMessage = "Unable to process request."
             }
@@ -356,7 +415,10 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                         suggestedCategory = category,
                         needsPasscode = needsPasscodeUpdate,
                         isVerified = true, // Any user feedback counts as verification
-                        isTruckFriendly = isTruckFriendlyUpdate
+                        isTruckFriendly = isTruckFriendlyUpdate,
+                        isAccessible = isAccessibleUpdate,
+                        hasBabyChanging = hasBabyChangingUpdate,
+                        isSingleStall = isSingleStallUpdate
                     )
                 )
             }.onSuccess { updated ->
@@ -382,6 +444,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                         put(id, category)
                     }
                 }
+                loadUserProfile() // Refresh stats
             }.onFailure { error ->
                 feedbackErrorMessage = error.message ?: "Unable to save your update right now."
             }
@@ -412,6 +475,8 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 customRestrooms = customs
                 incorrectRestroomIds = incorrects.toSet()
                 categoryOverrides = overrides
+            }.onFailure { error ->
+                Log.e("MapViewModel", "Failed to fetch Firestore data: ${error.message}", error)
             }
         }
 
@@ -432,9 +497,15 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                             customRestrooms.map { it.id }
                 Log.d("Search", "Fetching aggregates for ${allIds.size} total restrooms")
                 viewModelScope.launch {
-                    val aggregates = feedbackRepository.fetchAggregates(allIds)
-                    restroomAggregates = aggregates
-                    Log.d("Search", "Aggregates loaded: ${aggregates.size} items")
+                    runCatching {
+                        feedbackRepository.fetchAggregates(allIds)
+                    }.onSuccess { aggregates ->
+                        restroomAggregates = aggregates
+                        Log.d("Search", "Aggregates loaded: ${aggregates.size} items")
+                    }.onFailure { error ->
+                        Log.e("Search", "Failed to fetch aggregates: ${error.message}", error)
+                        // Don't crash, just proceed with empty/stale aggregates
+                    }
                 }
 
                 clearSelectedPlace()
@@ -444,7 +515,14 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 Log.d("Search", "Search completed. visibleGoogleRestrooms: ${visibleGoogleRestrooms.size}")
             }
             .addOnFailureListener { exception ->
-                Log.e("Search", "Search failed: ${exception.message}", exception)
+                Log.e("Search", "Search failed! Error Message: ${exception.message}", exception)
+                
+                // Detailed logging for authentication issues
+                if (exception.message?.contains("AUTHENTICATION", ignoreCase = true) == true || 
+                    exception.message?.contains("AUTH", ignoreCase = true) == true) {
+                    Log.e("Search", "DETECTED AUTHENTICATION ERROR. Please verify SHA-1 and Package Name in Google Cloud Console.")
+                }
+                
                 toastMessage = "Search failed: ${exception.message ?: "Unknown error"}"
                 isSearching = false
                 isInitialLoading = false
@@ -512,6 +590,9 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         newRestroomNote = ""
         newRestroomNeedsPasscode = false
         newRestroomIsTruckFriendly = false
+        newRestroomIsAccessible = false
+        newRestroomHasBabyChanging = false
+        newRestroomIsSingleStall = false
     }
 
     fun saveCustomRestroom() {
@@ -521,11 +602,17 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         val note = newRestroomNote
         val needsPasscode = newRestroomNeedsPasscode
         val isTruckFriendly = newRestroomIsTruckFriendly
+        val isAccessible = newRestroomIsAccessible
+        val hasBabyChanging = newRestroomHasBabyChanging
+        val isSingleStall = newRestroomIsSingleStall
         
         isSearching = true // Reuse as loading state
         viewModelScope.launch {
             runCatching {
-                feedbackRepository.saveCustomRestroom(name, category, note, location, needsPasscode, isTruckFriendly)
+                feedbackRepository.saveCustomRestroom(
+                    name, category, note, location, needsPasscode, isTruckFriendly,
+                    isAccessible, hasBabyChanging, isSingleStall
+                )
             }.onSuccess { id ->
                 toastMessage = "Restroom added to community map!"
                 pendingNewRestroomLocation = null
@@ -539,13 +626,17 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                             category = category,
                             note = note,
                             latitude = location.latitude,
-                            longitude = location.longitude
+                            longitude = location.longitude,
+                            isAccessible = isAccessible,
+                            hasBabyChanging = hasBabyChanging,
+                            isSingleStall = isSingleStall
                         )
                     )
                 }
 
                 // Refresh list
                 customRestrooms = feedbackRepository.fetchCustomRestrooms()
+                loadUserProfile() // Refresh stats
             }.onFailure {
                 toastMessage = "Failed to add restroom. Try again."
             }
@@ -584,5 +675,41 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
             }
             isSubmittingFeedback = false
         }
+    }
+
+    // Favorites Logic
+    fun toggleFavorite() {
+        if (userProfile?.isVerifiedUser != true) {
+            toastMessage = "Upgrade to Verified User to save favorites!"
+            return
+        }
+
+        val id = selectedRestroomId ?: return
+        val name = selectedRestroomName ?: "Restroom"
+        val location = selectedRestroomLocation ?: return
+        val category = userCategoryUpdate.ifBlank { selectedType }
+
+        viewModelScope.launch {
+            val isFav = restroomDao.isFavorite(id).first()
+            if (isFav) {
+                restroomDao.deleteFavoriteById(id)
+                toastMessage = "Removed from favorites."
+            } else {
+                restroomDao.insertFavorite(
+                    FavoriteRestroom(
+                        id = id,
+                        name = name,
+                        category = category,
+                        latitude = location.latitude,
+                        longitude = location.longitude
+                    )
+                )
+                toastMessage = "Added to favorites!"
+            }
+        }
+    }
+
+    fun isFavorite(id: String): Boolean {
+        return favoriteRestrooms.any { it.id == id }
     }
 }

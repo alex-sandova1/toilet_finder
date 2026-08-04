@@ -1,5 +1,6 @@
 package com.example.driverassist.login
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -29,13 +30,17 @@ class LoginViewModel : ViewModel() {
         
         // Ensure user profile exists in Firestore
         viewModelScope.launch {
-            val profile = userRepository.fetchUserProfile(firebaseUser.uid)
-            if (profile == null) {
-                userRepository.createUserProfile(
-                    uid = firebaseUser.uid,
-                    displayName = firebaseUser.displayName ?: "User",
-                    email = firebaseUser.email ?: ""
-                )
+            runCatching {
+                val profile = userRepository.fetchUserProfile(firebaseUser.uid)
+                if (profile == null) {
+                    userRepository.createUserProfile(
+                        uid = firebaseUser.uid,
+                        displayName = firebaseUser.displayName ?: "User",
+                        email = firebaseUser.email ?: ""
+                    )
+                }
+            }.onFailure { error ->
+                Log.e("LoginViewModel", "Failed to sync user profile: ${error.message}", error)
             }
         }
     }

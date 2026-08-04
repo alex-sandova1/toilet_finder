@@ -12,7 +12,20 @@
           "package_name": "com.example.driverassist"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "769881213094-c90t7qb5bri3nq0daqjc5ad4438j5tgm.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.driverassist",
+            "certificate_hash": "7dd843975ef4164a0eb21e7020026f4059f50c78"
+          }
+        },
+        {
+          "client_id": "769881213094-1j1ga27sro61hamdu92j2egn7bil4ke5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAeem5MdwFHCLVfy4Z8FpE26i2zJNewdmQ"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "769881213094-1j1ga27sro61hamdu92j2egn7bil4ke5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

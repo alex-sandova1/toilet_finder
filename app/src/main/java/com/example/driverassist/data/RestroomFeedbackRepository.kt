@@ -5,11 +5,13 @@ import com.example.driverassist.model.RestroomReportInput
 import com.example.driverassist.model.mergeRestroomAggregate
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.model.Place
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 
 class RestroomFeedbackRepository(
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
+    private val userRepository: UserRepository = UserRepository(firestore)
 ) {
     private val bathroomsCollection = firestore.collection("bathrooms")
     private val customBathroomsCollection = firestore.collection("custom_restrooms")
@@ -39,7 +41,10 @@ class RestroomFeedbackRepository(
         note: String, 
         latLng: LatLng, 
         needsPasscode: Boolean = false,
-        isTruckFriendly: Boolean = false
+        isTruckFriendly: Boolean = false,
+        isAccessible: Boolean = false,
+        hasBabyChanging: Boolean = false,
+        isSingleStall: Boolean = false
     ): String {
         val userId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "anonymous"
         val docRef = customBathroomsCollection.document()
@@ -52,9 +57,17 @@ class RestroomFeedbackRepository(
             longitude = latLng.longitude,
             needsPasscode = needsPasscode,
             isTruckFriendly = isTruckFriendly,
+            isAccessible = isAccessible,
+            hasBabyChanging = hasBabyChanging,
+            isSingleStall = isSingleStall,
             addedByUserId = userId
         )
         docRef.set(custom).await()
+        
+        if (userId != "anonymous") {
+            userRepository.incrementUserStats(userId, added = 1)
+        }
+        
         return docRef.id
     }
 
@@ -94,7 +107,16 @@ class RestroomFeedbackRepository(
             )
             transaction.set(documentRef, updated)
             updated
-        }.await()
+        }.await().also {
+            val userId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+            if (userId != null) {
+                userRepository.incrementUserStats(
+                    uid = userId,
+                    reports = 1,
+                    verifications = if (report.isVerified) 1 else 0
+                )
+            }
+        }
     }
 
     fun documentIdForPlace(place: Place): String =

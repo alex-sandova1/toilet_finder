@@ -15,7 +15,13 @@ fun resolveMapsApiKey(context: Context): String? {
     } else {
         context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
     }
-    return applicationInfo.metaData?.getString("com.google.android.geo.API_KEY")?.takeIf { it.isNotBlank() }
+    val key = applicationInfo.metaData?.getString("com.google.android.geo.API_KEY")?.takeIf { it.isNotBlank() }
+    if (key != null) {
+        Log.d("ConfigUtils", "Maps API Key resolved: ${key.take(4)}...${key.takeLast(4)}")
+    } else {
+        Log.e("ConfigUtils", "Maps API Key NOT found in Manifest metadata!")
+    }
+    return key
 }
 
 /**

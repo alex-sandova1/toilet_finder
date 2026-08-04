@@ -1,5 +1,7 @@
 package com.example.driverassist.model
 
+import com.google.firebase.firestore.PropertyName
+
 // Stores the aggregate community state for a restroom.
 data class RestroomAggregate(
     val placeId: String = "",
@@ -13,12 +15,20 @@ data class RestroomAggregate(
     val dirtyUntilEpochMillis: Long = 0L,
     val closedUntilEpochMillis: Long = 0L,
     val lastUpdatedEpochMillis: Long = 0L,
-    val isMarkedIncorrect: Boolean = false,
+    @get:PropertyName("markedIncorrect") @set:PropertyName("markedIncorrect")
+    var isMarkedIncorrect: Boolean = false,
     val note: String = "",
     val suggestedCategory: String = "",
     val needsPasscode: Boolean = false,
     val lastVerifiedEpochMillis: Long = 0L,
-    val isTruckFriendly: Boolean = false
+    @get:PropertyName("truckFriendly") @set:PropertyName("truckFriendly")
+    var isTruckFriendly: Boolean = false,
+    @get:PropertyName("accessible") @set:PropertyName("accessible")
+    var isAccessible: Boolean = false,
+    @get:PropertyName("hasBabyChanging") @set:PropertyName("hasBabyChanging")
+    var hasBabyChanging: Boolean = false,
+    @get:PropertyName("singleStall") @set:PropertyName("singleStall")
+    var isSingleStall: Boolean = false
 )
 
 // Represents one community update submission.
@@ -31,7 +41,10 @@ data class RestroomReportInput(
     val suggestedCategory: String? = null,
     val needsPasscode: Boolean? = null,
     val isVerified: Boolean = false,
-    val isTruckFriendly: Boolean? = null
+    val isTruckFriendly: Boolean? = null,
+    val isAccessible: Boolean? = null,
+    val hasBabyChanging: Boolean? = null,
+    val isSingleStall: Boolean? = null
 )
 
 private const val DEFAULT_DIRTY_ALERT_DURATION_MILLIS = 3 * 60 * 60 * 1000L
@@ -83,7 +96,10 @@ fun mergeRestroomAggregate(
         suggestedCategory = report.suggestedCategory ?: current.suggestedCategory,
         needsPasscode = report.needsPasscode ?: current.needsPasscode,
         lastVerifiedEpochMillis = nextVerifiedAt,
-        isTruckFriendly = report.isTruckFriendly ?: current.isTruckFriendly
+        isTruckFriendly = report.isTruckFriendly ?: current.isTruckFriendly,
+        isAccessible = report.isAccessible ?: current.isAccessible,
+        hasBabyChanging = report.hasBabyChanging ?: current.hasBabyChanging,
+        isSingleStall = report.isSingleStall ?: current.isSingleStall
     )
 }
 
@@ -110,10 +126,18 @@ data class CustomRestroom(
     val category: String = "Public Restroom",
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,
-    val isDeleted: Boolean = false,
+    @get:PropertyName("deleted") @set:PropertyName("deleted")
+    var isDeleted: Boolean = false,
     val note: String = "",
     val needsPasscode: Boolean = false,
-    val isTruckFriendly: Boolean = false,
+    @get:PropertyName("truckFriendly") @set:PropertyName("truckFriendly")
+    var isTruckFriendly: Boolean = false,
+    @get:PropertyName("accessible") @set:PropertyName("accessible")
+    var isAccessible: Boolean = false,
+    @get:PropertyName("hasBabyChanging") @set:PropertyName("hasBabyChanging")
+    var hasBabyChanging: Boolean = false,
+    @get:PropertyName("singleStall") @set:PropertyName("singleStall")
+    var isSingleStall: Boolean = false,
     val addedByUserId: String = "anonymous",
     val timestamp: Long = System.currentTimeMillis()
 )

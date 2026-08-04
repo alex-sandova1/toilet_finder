@@ -25,23 +25,28 @@ class MainPage : AppCompatActivity() {
 
         // Initializes the Places SDK.
         val apiKey = resolveMapsApiKey(this)
-        if (!Places.isInitialized() && !apiKey.isNullOrBlank()) {
-            Places.initializeWithNewPlacesApiEnabled(applicationContext, apiKey)
-        } else if (apiKey.isNullOrBlank()) {
-            Log.e("MainPage", "Maps API key missing in manifest.")
+        if (!apiKey.isNullOrBlank()) {
+            try {
+                if (!Places.isInitialized()) {
+                    Places.initializeWithNewPlacesApiEnabled(applicationContext, apiKey)
+                    Log.i("MainPage", "Places SDK initialized successfully.")
+                }
+            } catch (e: Exception) {
+                Log.e("MainPage", "Places SDK initialization failed: ${e.message}", e)
+                // We don't crash the app here, but some features may be unavailable
+            }
+        } else {
+            Log.e("MainPage", "Maps API key missing in manifest. Places SDK NOT initialized.")
         }
 
-        // Initialize Maps renderer asynchronously (non-blocking) to avoid Places API interference
-        lifecycleScope.launch {
-            runCatching {
-                MapsInitializer.initialize(
-                    applicationContext,
-                    MapsInitializer.Renderer.LEGACY
-                ) { renderer ->
-                    Log.i("MainPage", "Maps renderer initialized: $renderer")
-                }
-            }.onFailure {
-                Log.w("MainPage", "Maps renderer init failed: ${it.message}")
+        // Initialize Maps renderer to the latest version
+        MapsInitializer.initialize(
+            applicationContext,
+            MapsInitializer.Renderer.LATEST
+        ) { renderer ->
+            when (renderer) {
+                MapsInitializer.Renderer.LATEST -> Log.i("MainPage", "The latest version of the renderer is used.")
+                MapsInitializer.Renderer.LEGACY -> Log.i("MainPage", "The legacy version of the renderer is used.")
             }
         }
 

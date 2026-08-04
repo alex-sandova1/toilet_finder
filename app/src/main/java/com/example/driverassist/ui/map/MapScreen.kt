@@ -7,6 +7,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,15 +17,26 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Accessible
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.driverassist.model.CustomRestroom
 import com.example.driverassist.model.RestroomAggregate
@@ -32,6 +44,7 @@ import com.example.driverassist.model.dirtyLikelihoodPercent
 import com.example.driverassist.model.isClosedNow
 import com.example.driverassist.model.isDirtyNow
 import com.example.driverassist.model.isRecentlyVerified
+import com.example.driverassist.ui.components.AppLogo
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.location.LocationRequest
@@ -42,6 +55,7 @@ import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.model.Place
 import com.google.maps.android.compose.*
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -55,6 +69,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
     val cameraPositionState = rememberCameraPositionState()
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val placesClient = remember { Places.createClient(context) }
+    
     val mapProperties by remember(viewModel.hasLocationPermission) {
         mutableStateOf(MapProperties(isMyLocationEnabled = viewModel.hasLocationPermission))
     }
@@ -82,14 +97,12 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                     cameraPositionState.position = CameraPosition.fromLatLngZoom(latLng, 15f)
                     viewModel.searchForBathrooms(placesClient, latLng, viewModel.selectedType)
                 } ?: run {
-                    // Fallback if last location is unavailable (e.g. on some emulators)
                     viewModel.searchForBathrooms(placesClient, LatLng(37.4220, -122.0841), viewModel.selectedType)
                 }
             }.addOnFailureListener {
                 viewModel.searchForBathrooms(placesClient, LatLng(37.4220, -122.0841), viewModel.selectedType)
             }
         } else {
-            // If permission denied, stop loading
             viewModel.searchForBathrooms(placesClient, LatLng(37.4220, -122.0841), viewModel.selectedType)
         }
     }
@@ -128,630 +141,364 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
         if (cameraPositionState.isMoving) viewModel.onCameraMoved()
     }
 
-    var showAccountDialog by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    var showFilterSheet by remember { mutableStateOf(false) }
 
     val sheetState = rememberStandardBottomSheetState(
         initialValue = SheetValue.PartiallyExpanded
     )
     val scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState)
 
-    BottomSheetScaffold(
-        scaffoldState = scaffoldState,
-        sheetPeekHeight = 60.dp,
-        sheetContent = {
-            RestroomListView(
-                viewModel = viewModel,
-                onRestroomClick = { latLng, place, custom ->
-                    coroutineScope.launch {
-                        cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(latLng, 17f))
-                        if (place != null) viewModel.loadFeedbackForPlace(place)
-                        else if (custom != null) viewModel.loadFeedbackForCustom(custom)
-                        sheetState.partialExpand()
-                    }
-                }
-            )
-        },
-        topBar = {
-            TopAppBar(
-                title = {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        itemsIndexed(viewModel.restroomTypes) { index, type ->
-                            val selected = viewModel.selectedTypeIndex == index
-                            FilterChip(
-                                selected = selected,
-                                onClick = { 
-                                    viewModel.updateSelectedType(index, placesClient, cameraPositionState.position.target) 
-                                },
-                                label = { Text(type) },
-                                leadingIcon = if (selected) {
-                                    { Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
-                                } else null,
-                                enabled = !viewModel.isSearching
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    val isVerified = viewModel.userProfile?.isVerifiedUser == true
-                    IconButton(
-                        onClick = { viewModel.toggleVerifiedFilter() }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Verified,
-                            contentDescription = "Verified Clean Filter",
-                            tint = if (viewModel.isVerifiedFilterEnabled) {
-                                MaterialTheme.colorScheme.tertiary
-                            } else {
-                                if (isVerified) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                            }
-                        )
-                    }
-
-                    IconButton(onClick = { showAccountDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.AccountCircle,
-                            contentDescription = "Account",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                )
-            )
-
-            if (viewModel.userProfile?.isVerifiedUser == true && viewModel.searchHistory.isNotEmpty()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                    tonalElevation = 1.dp,
-                    modifier = Modifier.fillMaxWidth()
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        // Only enable drawer gestures if the drawer is already open (for swiping closed).
+        // This makes map interaction perfectly smooth when the drawer is closed.
+        gesturesEnabled = drawerState.isOpen,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            item {
-                                Text(
-                                    "Recents:",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(end = 4.dp)
-                                )
+                    // Header
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                        AppLogo(modifier = Modifier.scale(0.8f))
+                        Spacer(Modifier.height(16.dp))
+                        viewModel.currentUser?.let { user ->
+                            Text(user.displayName ?: "User", style = MaterialTheme.typography.titleLarge)
+                            Text(user.email ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Filters Section
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Filters", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        
+                        NavigationDrawerItem(
+                            label = { Text("Verified Clean") },
+                            selected = viewModel.isVerifiedFilterEnabled,
+                            onClick = { viewModel.toggleVerifiedFilter() },
+                            icon = { Icon(Icons.Default.Verified, null) },
+                            badge = {
+                                if (viewModel.userProfile?.isVerifiedUser != true) {
+                                    Icon(Icons.Default.Lock, null, modifier = Modifier.size(16.dp))
+                                }
                             }
-                            items(viewModel.searchHistory) { query ->
-                                AssistChip(
+                        )
+
+                        NavigationDrawerItem(
+                            label = { Text("Advanced Filters") },
+                            selected = false,
+                            onClick = {
+                                if (viewModel.userProfile?.isVerifiedUser == true) {
+                                    showFilterSheet = true
+                                    coroutineScope.launch { drawerState.close() }
+                                } else {
+                                    viewModel.toggleVerifiedFilter()
+                                }
+                            },
+                            icon = { Icon(Icons.Default.FilterList, null) },
+                            badge = {
+                                if (viewModel.userProfile?.isVerifiedUser != true) {
+                                    Icon(Icons.Default.Lock, null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        )
+                    }
+
+                    // My Activity Section
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("My Activity", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                StatItem(label = "Reports", count = viewModel.userProfile?.totalReports ?: 0, icon = Icons.Default.Edit)
+                                StatItem(label = "Added", count = viewModel.userProfile?.totalAdded ?: 0, icon = Icons.Default.AddLocation)
+                                StatItem(label = "Verified", count = viewModel.userProfile?.totalVerifications ?: 0, icon = Icons.Default.Verified)
+                            }
+                        }
+                    }
+
+                    // Favorites Section
+                    if (viewModel.favoriteRestrooms.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Favorites", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                            viewModel.favoriteRestrooms.take(5).forEach { fav ->
+                                NavigationDrawerItem(
+                                    label = { Text(fav.name, maxLines = 1) },
+                                    selected = false,
                                     onClick = {
-                                        viewModel.searchForBathrooms(
-                                            placesClient,
-                                            cameraPositionState.position.target,
-                                            query
-                                        )
+                                        coroutineScope.launch {
+                                            drawerState.close()
+                                            val latLng = LatLng(fav.latitude, fav.longitude)
+                                            cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(latLng, 17f))
+                                            viewModel.loadFeedbackForCustom(
+                                                CustomRestroom(id = fav.id, name = fav.name, category = fav.category, latitude = fav.latitude, longitude = fav.longitude)
+                                            )
+                                        }
                                     },
-                                    label = { Text(query, style = MaterialTheme.typography.bodySmall) },
-                                    leadingIcon = { Icon(Icons.Default.History, null, modifier = Modifier.size(14.dp)) },
-                                    border = null,
-                                    colors = AssistChipDefaults.assistChipColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                    )
+                                    icon = { Icon(Icons.Default.Favorite, null, tint = Color.Red) }
                                 )
                             }
                         }
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    // Account Actions Section
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HorizontalDivider()
+                        NavigationDrawerItem(
+                            label = { Text(if (viewModel.currentUser != null) "Sign Out" else "Sign In") },
+                            selected = false,
+                            onClick = {
+                                coroutineScope.launch { drawerState.close() }
+                                if (viewModel.currentUser != null) {
+                                    viewModel.signOut()
+                                    val intent = Intent(context, com.example.driverassist.login.LoginActivity::class.java).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                    }
+                                    context.startActivity(intent)
+                                } else {
+                                    val intent = Intent(context, com.example.driverassist.login.LoginActivity::class.java)
+                                    context.startActivity(intent)
+                                }
+                            },
+                            icon = { Icon(if (viewModel.currentUser != null) Icons.AutoMirrored.Filled.Logout else Icons.AutoMirrored.Filled.Login, null) }
+                        )
                     }
                 }
             }
         }
-    ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            GoogleMap(
-                modifier = Modifier.fillMaxSize(),
-                cameraPositionState = cameraPositionState,
-                properties = mapProperties,
-                uiSettings = mapUiSettings,
-                contentPadding = PaddingValues(bottom = 64.dp, start = 16.dp, end = 16.dp),
-                onMapLongClick = { viewModel.onMapLongClick(it) }
-            ) {
-                // Google Places Markers
-                viewModel.visibleGoogleRestrooms.forEach { place ->
-                    place.location?.let { latLng ->
-                        Marker(
-                            state = MarkerState(position = latLng),
-                            title = place.displayName,
-                            snippet = "Tap for community status",
-                            onClick = {
-                                viewModel.loadFeedbackForPlace(place)
-                                true
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            BottomSheetScaffold(
+                scaffoldState = scaffoldState,
+                sheetPeekHeight = 60.dp,
+                sheetContent = {
+                    RestroomListView(
+                        viewModel = viewModel,
+                        onRestroomClick = { latLng, place, custom ->
+                            coroutineScope.launch {
+                                cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(latLng, 17f))
+                                if (place != null) viewModel.loadFeedbackForPlace(place)
+                                else if (custom != null) viewModel.loadFeedbackForCustom(custom)
+                                sheetState.partialExpand()
                             }
+                        }
+                    )
+                },
+                topBar = {
+                    TopAppBar(
+                        navigationIcon = {
+                            IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Open Navigation Drawer")
+                            }
+                        },
+                        title = {
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                itemsIndexed(viewModel.restroomTypes) { index, type ->
+                                    val selected = viewModel.selectedTypeIndex == index
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = { 
+                                            viewModel.updateSelectedType(index, placesClient, cameraPositionState.position.target) 
+                                        },
+                                        label = { Text(type) },
+                                        leadingIcon = if (selected) {
+                                            { Icon(Icons.Default.Done, null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                                        } else null,
+                                        enabled = !viewModel.isSearching
+                                    )
+                                }
+                            }
+                        },
+                        actions = {
+                            if (viewModel.isVerifiedFilterEnabled || viewModel.filterAccessible || viewModel.filterBabyChanging || viewModel.filterSingleStall) {
+                                IconButton(onClick = {
+                                    viewModel.isVerifiedFilterEnabled = false
+                                    viewModel.filterAccessible = false
+                                    viewModel.filterBabyChanging = false
+                                    viewModel.filterSingleStall = false
+                                }) {
+                                    Icon(Icons.Default.FilterListOff, contentDescription = "Clear Filters")
+                                }
+                            }
+                        }
+                    )
+
+                    if (viewModel.userProfile?.isVerifiedUser == true && viewModel.searchHistory.isNotEmpty()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                            tonalElevation = 1.dp,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                item {
+                                    Text("Recents:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                }
+                                items(viewModel.searchHistory) { query ->
+                                    AssistChip(
+                                        onClick = { viewModel.searchForBathrooms(placesClient, cameraPositionState.position.target, query) },
+                                        label = { Text(query, style = MaterialTheme.typography.bodySmall) },
+                                        leadingIcon = { Icon(Icons.Default.History, null, modifier = Modifier.size(14.dp)) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            ) { paddingValues ->
+                Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+                    GoogleMap(
+                        modifier = Modifier.fillMaxSize(),
+                        cameraPositionState = cameraPositionState,
+                        properties = mapProperties,
+                        uiSettings = mapUiSettings,
+                        contentPadding = PaddingValues(bottom = 64.dp, start = 16.dp, end = 16.dp),
+                        onMapLongClick = { viewModel.onMapLongClick(it) }
+                    ) {
+                        viewModel.visibleGoogleRestrooms.forEach { place ->
+                            place.location?.let { latLng ->
+                                Marker(
+                                    state = MarkerState(position = latLng),
+                                    title = place.displayName,
+                                    onClick = {
+                                        viewModel.loadFeedbackForPlace(place)
+                                        true
+                                    }
+                                )
+                            }
+                        }
+
+                        viewModel.visibleCustomRestrooms.forEach { custom ->
+                            Marker(
+                                state = MarkerState(position = LatLng(custom.latitude, custom.longitude)),
+                                title = custom.name,
+                                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
+                                onClick = {
+                                    viewModel.loadFeedbackForCustom(custom)
+                                    true
+                                }
+                            )
+                        }
+                        
+                        viewModel.pendingNewRestroomLocation?.let {
+                            Marker(state = MarkerState(position = it), title = "New Location", alpha = 0.7f)
+                        }
+                    }
+
+                    if (viewModel.showSearchThisArea) {
+                        ExtendedFloatingActionButton(
+                            onClick = { viewModel.searchForBathrooms(placesClient, cameraPositionState.position.target, viewModel.selectedType) },
+                            icon = { Icon(Icons.Default.Search, null) },
+                            text = { Text(if (viewModel.isSearching) "Searching..." else "Search this area") },
+                            expanded = !viewModel.isSearching,
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 120.dp)
                         )
                     }
-                }
 
-                // Custom Community Markers
-                viewModel.visibleCustomRestrooms.forEach { custom ->
-                    Marker(
-                        state = MarkerState(position = LatLng(custom.latitude, custom.longitude)),
-                        title = custom.name,
-                        snippet = "Community Added",
-                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
-                        onClick = {
-                            viewModel.loadFeedbackForCustom(custom)
-                            true
+                    if (viewModel.visibleGoogleRestrooms.isNotEmpty() || viewModel.visibleCustomRestrooms.isNotEmpty()) {
+                        Button(
+                            onClick = { viewModel.findAndNavigateToNearestRestroom(context) },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp)
+                        ) {
+                            Text("Navigate to nearest")
                         }
+                    }
+
+                    // Interaction Dialogs (Feedback & Add Restroom)
+                    if (viewModel.selectedRestroomId != null) {
+                        RestroomDetailsDialog(viewModel = viewModel)
+                    }
+
+                    if (viewModel.pendingNewRestroomLocation != null) {
+                        AddRestroomDialog(viewModel = viewModel)
+                    }
+
+                    // Map Controls
+                    MapControls(
+                        coroutineScope = coroutineScope,
+                        cameraPositionState = cameraPositionState,
+                        userLocation = viewModel.userLocation
                     )
                 }
-                
-                // Temporary marker for the one being added
-                viewModel.pendingNewRestroomLocation?.let {
-                    Marker(
-                        state = MarkerState(position = it),
-                        title = "New Restroom Location",
-                        alpha = 0.7f
-                    )
-                }
             }
 
-            if (viewModel.showSearchThisArea) {
-                ExtendedFloatingActionButton(
-                    onClick = { viewModel.searchForBathrooms(placesClient, cameraPositionState.position.target, viewModel.selectedType) },
-                    icon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    text = { Text(if (viewModel.isSearching) "Searching..." else "Search this area") },
-                    expanded = !viewModel.isSearching,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 120.dp),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-
-            if (viewModel.visibleGoogleRestrooms.isNotEmpty() || viewModel.visibleCustomRestrooms.isNotEmpty()) {
-                Button(
-                    onClick = {
-                        val nearest = viewModel.findAndNavigateToNearestRestroom(context)
-                        if (nearest == null) {
-                            Toast.makeText(context, "No restrooms found nearby. Check GPS.", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    enabled = !viewModel.isSearching,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp)
-                ) {
-                    Text("Navigate to nearest restroom")
-                }
-            }
-
-
-            if (viewModel.selectedRestroomId != null && viewModel.selectedRestroomName != null) {
-                var showFeedbackInputs by remember { mutableStateOf(false) }
-
-                AlertDialog(
-                    onDismissRequest = { 
-                        viewModel.clearSelectedPlace()
-                        showFeedbackInputs = false
-                    },
-                    title = { Text(viewModel.selectedRestroomName ?: "Restroom") },
-                    text = {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            if (viewModel.isLoadingFeedback) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                    Text("Loading community status…")
-                                }
-                            } else {
-                                viewModel.selectedAggregate?.let { agg ->
-                                    RestroomAggregateSummary(aggregate = agg)
-                                    
-                                    if (agg.needsPasscode || agg.isTruckFriendly) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            if (agg.needsPasscode) {
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                                                    shape = MaterialTheme.shapes.small,
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(8.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Icon(Icons.Default.VpnKey, null, modifier = Modifier.size(16.dp))
-                                                        Spacer(Modifier.width(8.dp))
-                                                        Text("Code Required", style = MaterialTheme.typography.labelMedium)
-                                                    }
-                                                }
-                                            }
-                                            if (agg.isTruckFriendly) {
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                                    shape = MaterialTheme.shapes.small,
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(8.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Icon(Icons.Default.LocalShipping, null, modifier = Modifier.size(16.dp))
-                                                        Spacer(Modifier.width(8.dp))
-                                                        Text("Truck Friendly", style = MaterialTheme.typography.labelMedium)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (agg.note.isNotBlank()) {
-                                        Text(
-                                            text = "Note: ${agg.note}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            modifier = Modifier.padding(vertical = 4.dp)
-                                        )
-                                    }
-                                } ?: Text("No community reports yet.")
-
-                                viewModel.feedbackErrorMessage?.let {
-                                    Text(text = it, color = MaterialTheme.colorScheme.error)
-                                }
-
-                                if (!showFeedbackInputs) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Button(
-                                            onClick = { viewModel.confirmStillClean() },
-                                            modifier = Modifier.weight(1f),
-                                            enabled = !viewModel.isSubmittingFeedback,
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
-                                        ) {
-                                            Icon(Icons.Default.ThumbUp, null, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("Still Clean")
-                                        }
-
-                                        Button(
-                                            onClick = { showFeedbackInputs = true },
-                                            modifier = Modifier.weight(1f),
-                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)
-                                        ) {
-                                            Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("Update")
-                                        }
-                                    }
-                                } else {
-                                    OutlinedTextField(
-                                        value = viewModel.userNoteUpdate,
-                                        onValueChange = { viewModel.userNoteUpdate = it },
-                                        label = { Text("Note") },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Checkbox(checked = viewModel.needsPasscodeUpdate, onCheckedChange = { viewModel.needsPasscodeUpdate = it })
-                                            Text("Passcode", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Checkbox(checked = viewModel.isTruckFriendlyUpdate, onCheckedChange = { viewModel.isTruckFriendlyUpdate = it })
-                                            Text("Truck Friendly", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-
-                                    CleanlinessRatingRow(
-                                        selectedRating = viewModel.selectedCleanlinessRating,
-                                        onRatingSelected = { viewModel.selectedCleanlinessRating = it }
-                                    )
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        FilterChip(selected = viewModel.markedDirtyUpdate, onClick = { viewModel.markedDirtyUpdate = !viewModel.markedDirtyUpdate }, label = { Text("Dirty Now") })
-                                        FilterChip(selected = viewModel.markedClosedUpdate, onClick = { viewModel.markedClosedUpdate = !viewModel.markedClosedUpdate }, label = { Text("Closed Now") })
-                                    }
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { viewModel.submitFeedback(true); showFeedbackInputs = false }, modifier = Modifier.weight(1f)) {
-                                            Text("Save")
-                                        }
-                                        TextButton(onClick = { showFeedbackInputs = false }) { Text("Cancel") }
-                                    }
-                                }
-
-                                if (viewModel.isSubmittingFeedback) {
-                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                                }
-
-                                Divider(modifier = Modifier.padding(vertical = 4.dp))
-
-                                Button(
-                                    onClick = { viewModel.flagAsIncorrect() },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
-                                ) {
-                                    Icon(Icons.Default.LocationOff, null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Not a Restroom")
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            viewModel.selectedRestroomLocation?.let { loc ->
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${loc.latitude},${loc.longitude}")).apply { setPackage("com.google.android.apps.maps") }
-                                context.startActivity(intent)
-                            }
-                        }) { Text("Navigate") }
-                    },
-                    dismissButton = { 
-                        TextButton(onClick = { 
-                            viewModel.clearSelectedPlace()
-                            showFeedbackInputs = false
-                        }) { Text("Close") } 
-                    }
-                )
-            }
-
-            // Add Restroom Dialog
-            if (viewModel.pendingNewRestroomLocation != null) {
-                AlertDialog(
-                    onDismissRequest = { viewModel.pendingNewRestroomLocation = null },
-                    title = { Text("Add Missing Restroom") },
-                    text = {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.verticalScroll(rememberScrollState())
-                        ) {
-                            Text("Give this location a name and category so others can find it.")
-                            OutlinedTextField(
-                                value = viewModel.newRestroomName,
-                                onValueChange = { viewModel.newRestroomName = it },
-                                label = { Text("Restroom Name") },
-                                placeholder = { Text("e.g. Central Park North") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            OutlinedTextField(
-                                value = viewModel.newRestroomNote,
-                                onValueChange = { viewModel.newRestroomNote = it },
-                                label = { Text("Notes (Optional)") },
-                                placeholder = { Text("e.g. Inside Hector's Mariscos") },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = viewModel.newRestroomNeedsPasscode,
-                                        onCheckedChange = { viewModel.newRestroomNeedsPasscode = it }
-                                    )
-                                    Text("Passcode", style = MaterialTheme.typography.bodySmall)
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = viewModel.newRestroomIsTruckFriendly,
-                                        onCheckedChange = { viewModel.newRestroomIsTruckFriendly = it }
-                                    )
-                                    Text("Truck Friendly", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            
-                            Text("Category", style = MaterialTheme.typography.labelLarge)
-                            var isAddDropdownExpanded by remember { mutableStateOf(false) }
-
-                            ExposedDropdownMenuBox(
-                                expanded = isAddDropdownExpanded,
-                                onExpandedChange = { isAddDropdownExpanded = !isAddDropdownExpanded },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                OutlinedTextField(
-                                    value = viewModel.newRestroomCategory,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Category") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isAddDropdownExpanded) },
-                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = isAddDropdownExpanded,
-                                    onDismissRequest = { isAddDropdownExpanded = false }
-                                ) {
-                                    viewModel.restroomTypes.forEach { type ->
-                                        DropdownMenuItem(
-                                            text = { Text(type) },
-                                            onClick = {
-                                                viewModel.newRestroomCategory = type
-                                                isAddDropdownExpanded = false
-                                            },
-                                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = { viewModel.saveCustomRestroom() },
-                            enabled = viewModel.newRestroomName.isNotBlank()
-                        ) {
-                            Text("Add to Map")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { viewModel.pendingNewRestroomLocation = null }) {
-                            Text("Cancel")
-                        }
-                    }
-                )
-            }
-
-            // Custom Zoom Controls on the left
-            Column(
+            // Custom Edge Swipe Detector (Invisible)
+            // This detects swipes from the extreme left edge to open the drawer
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 12.dp, bottom = 140.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SmallFloatingActionButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            cameraPositionState.animate(CameraUpdateFactory.zoomIn())
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary,
-                    shape = androidx.compose.foundation.shape.CircleShape
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Zoom In")
-                }
-                SmallFloatingActionButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            cameraPositionState.animate(CameraUpdateFactory.zoomOut())
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary,
-                    shape = androidx.compose.foundation.shape.CircleShape
-                ) {
-                    Icon(Icons.Default.Remove, contentDescription = "Zoom Out")
-                }
-            }
-
-            // Custom My Location button positioned near zoom controls.
-            FloatingActionButton(
-                onClick = {
-                    viewModel.userLocation?.let {
-                        coroutineScope.launch {
-                            cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(it, 15f))
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 12.dp, bottom = 140.dp),
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary,
-                shape = androidx.compose.foundation.shape.CircleShape
-            ) {
-                Icon(Icons.Default.MyLocation, contentDescription = "My Location")
-            }
-
-            if (showAccountDialog) {
-                AlertDialog(
-                    onDismissRequest = { showAccountDialog = false },
-                    title = { Text("My Account") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            viewModel.currentUser?.let { user ->
-                                Text("Signed in as:", style = MaterialTheme.typography.labelLarge)
-                                Text(user.displayName ?: "User", style = MaterialTheme.typography.bodyLarge)
-                                Text(user.email ?: "", style = MaterialTheme.typography.bodySmall)
-                                
-                                Spacer(modifier = Modifier.height(16.dp))
-                                
-                                // Subscription Status
-                                Surface(
-                                    color = if (viewModel.userProfile?.isVerifiedUser == true) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer,
-                                    shape = MaterialTheme.shapes.medium,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        val statusText = if (viewModel.userProfile?.isVerifiedUser == true) "Status: Verified User" else "Status: Free User"
-                                        Text(statusText, style = MaterialTheme.typography.labelMedium)
-                                        if (viewModel.userProfile?.isVerifiedUser != true) {
-                                            Text("Upgrade for $2/mo to get Verified Clean filters.", style = MaterialTheme.typography.bodySmall)
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Button(
-                                                onClick = {
-                                                    // MOCK: In a real app, this would trigger a payment flow
-                                                    // For now, we can show a Toast or just mock the state if we had a method
-                                                    Toast.makeText(context, "Payment flow would start here!", Toast.LENGTH_SHORT).show()
-                                                },
-                                                modifier = Modifier.fillMaxWidth(),
-                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                                            ) {
-                                                Text("Upgrade Now")
-                                            }
-                                        } else {
-                                            Text("Premium features unlocked.", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                }
-                            } ?: Text("You are not signed in.")
-                        }
-                    },
-                    confirmButton = {
-                    TextButton(onClick = { showAccountDialog = false }) {
-                        Text("Close")
-                    }
-                },
-                dismissButton = {
-                    if (viewModel.currentUser != null) {
-                        TextButton(
-                            onClick = {
-                                viewModel.signOut()
-                                showAccountDialog = false
-                                // Navigate to login
-                                val intent = Intent(context, com.example.driverassist.login.LoginActivity::class.java).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                }
-                                context.startActivity(intent)
-                            },
-                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Text("Sign Out")
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                showAccountDialog = false
-                                val intent = Intent(context, com.example.driverassist.login.LoginActivity::class.java)
-                                context.startActivity(intent)
+                    .fillMaxHeight()
+                    .width(20.dp)
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures { _, dragAmount ->
+                            // Only trigger if swipe is clearly to the right and drawer is closed
+                            if (dragAmount > 20f && drawerState.isClosed) {
+                                coroutineScope.launch { drawerState.open() }
                             }
-                        ) {
-                            Text("Sign In")
                         }
                     }
-                }
             )
         }
     }
 
+    if (showFilterSheet) {
+        AdvancedFilterSheet(viewModel = viewModel, onDismiss = { showFilterSheet = false })
+    }
+
     if (viewModel.isInitialLoading) {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(48.dp),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Finding nearby restrooms...",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
+        LoadingScreen()
+    }
+}
+
+@Composable
+fun MapControls(
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    cameraPositionState: CameraPositionState,
+    userLocation: LatLng?
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 140.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SmallFloatingActionButton(onClick = { coroutineScope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomIn()) } }) {
+                Icon(Icons.Default.Add, "Zoom In")
             }
+            SmallFloatingActionButton(onClick = { coroutineScope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomOut()) } }) {
+                Icon(Icons.Default.Remove, "Zoom Out")
+            }
+        }
+
+        FloatingActionButton(
+            onClick = {
+                userLocation?.let { coroutineScope.launch { cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(it, 15f)) } }
+            },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 140.dp)
+        ) {
+            Icon(Icons.Default.MyLocation, "My Location")
         }
     }
 }
@@ -759,69 +506,29 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 @Composable
 fun RestroomListView(
     viewModel: MapViewModel,
-    onRestroomClick: (LatLng, com.google.android.libraries.places.api.model.Place?, CustomRestroom?) -> Unit
+    onRestroomClick: (LatLng, Place?, CustomRestroom?) -> Unit
 ) {
     val googleRestrooms = viewModel.visibleGoogleRestrooms
     val customRestrooms = viewModel.visibleCustomRestrooms
     val userLocation = viewModel.userLocation
 
-    // Combine and sort by distance if location is available, then limit to 10
     val combinedList = remember(googleRestrooms, customRestrooms, userLocation) {
         val list = mutableListOf<RestroomListItemData>()
-        
         googleRestrooms.forEach { place ->
-            place.location?.let { loc ->
-                list.add(RestroomListItemData(
-                    id = place.id ?: "",
-                    name = place.displayName ?: "Restroom",
-                    location = loc,
-                    category = viewModel.selectedType,
-                    googlePlace = place
-                ))
-            }
+            place.location?.let { list.add(RestroomListItemData(place.id ?: "", place.displayName ?: "Restroom", it, viewModel.selectedType, googlePlace = place)) }
         }
-        
-        customRestrooms.forEach { custom ->
-            list.add(RestroomListItemData(
-                id = custom.id,
-                name = custom.name,
-                location = LatLng(custom.latitude, custom.longitude),
-                category = custom.category,
-                customRestroom = custom
-            ))
-        }
-
-        if (userLocation != null) {
-            list.sortedBy { com.example.driverassist.util.distanceMeters(userLocation, it.location) }
-                .take(10)
-        } else {
-            list.take(10)
-        }
+        customRestrooms.forEach { list.add(RestroomListItemData(it.id, it.name, LatLng(it.latitude, it.longitude), it.category, customRestroom = it)) }
+        if (userLocation != null) list.sortedBy { com.example.driverassist.util.distanceMeters(userLocation, it.location) }.take(10) else list.take(10)
     }
 
     Column(modifier = Modifier.fillMaxHeight(0.8f).padding(horizontal = 16.dp)) {
-        Text(
-            text = "Nearby Restrooms",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-        
+        Text("Nearby Restrooms", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(vertical = 8.dp))
         if (combinedList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No restrooms found in this area.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No restrooms found.") }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 24.dp)
-            ) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                 items(combinedList) { item ->
-                    RestroomRow(
-                        item = item,
-                        aggregate = viewModel.restroomAggregates[item.id],
-                        userLocation = userLocation,
-                        onClick = { onRestroomClick(item.location, item.googlePlace, item.customRestroom) }
-                    )
+                    RestroomRow(item = item, aggregate = viewModel.restroomAggregates[item.id], userLocation = userLocation, onClick = { onRestroomClick(item.location, item.googlePlace, item.customRestroom) })
                 }
             }
         }
@@ -833,204 +540,401 @@ data class RestroomListItemData(
     val name: String,
     val location: LatLng,
     val category: String,
-    val googlePlace: com.google.android.libraries.places.api.model.Place? = null,
+    val googlePlace: Place? = null,
     val customRestroom: CustomRestroom? = null
 )
 
 @Composable
-fun RestroomRow(
-    item: RestroomListItemData,
-    aggregate: com.example.driverassist.model.RestroomAggregate?,
-    userLocation: LatLng?,
-    onClick: () -> Unit
-) {
-    val distance = if (userLocation != null) {
-        com.example.driverassist.util.distanceMeters(userLocation, item.location)
-    } else null
-
+fun RestroomRow(item: RestroomListItemData, aggregate: RestroomAggregate?, userLocation: LatLng?, onClick: () -> Unit) {
+    val distance = userLocation?.let { com.example.driverassist.util.distanceMeters(it, item.location) }
     val now = System.currentTimeMillis()
-    val isDirty = aggregate?.isDirtyNow(now) == true
-    val isClosed = aggregate?.isClosedNow(now) == true
-    val isRecentlyVerified = aggregate?.isRecentlyVerified(now) == true
 
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Icon based on category
-            val icon = when {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val categoryIcon = when {
                 item.category.contains("coffee", ignoreCase = true) -> Icons.Default.Coffee
                 item.category.contains("gas", ignoreCase = true) -> Icons.Default.LocalGasStation
-                item.category.contains("food", ignoreCase = true) || item.category.contains("restaurant", ignoreCase = true) -> Icons.Default.Restaurant
-                item.category.contains("mall", ignoreCase = true) -> Icons.Default.Store
+                item.category.contains("fast food", ignoreCase = true) -> Icons.Default.Fastfood
+                item.category.contains("restaurant", ignoreCase = true) -> Icons.Default.Restaurant
+                item.category.contains("bar", ignoreCase = true) -> Icons.Default.LocalBar
+                item.category.contains("mall", ignoreCase = true) -> Icons.Default.Storefront
                 else -> Icons.Default.Wc
             }
             
             Box(
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.small),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    icon, 
-                    contentDescription = null, 
-                    modifier = Modifier.size(20.dp), 
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Icon(categoryIcon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
-
-            Spacer(Modifier.width(8.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    item.name, 
-                    style = MaterialTheme.typography.titleSmall, 
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (distance != null) {
-                        Text(
-                            "${String.format(Locale.US, "%.1f", distance / 1000.0)} km", 
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(" • ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text(
-                        item.category, 
-                        style = MaterialTheme.typography.bodySmall, 
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                }
+            
+            Spacer(Modifier.width(12.dp))
+            
+            Column(Modifier.weight(1f)) {
+                Text(item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
                 
-                if (isDirty || isClosed || isRecentlyVerified) {
-                    Row(modifier = Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (isRecentlyVerified) Badge(containerColor = MaterialTheme.colorScheme.tertiaryContainer) { Text("Verified", style = MaterialTheme.typography.labelSmall) }
-                        if (isDirty) Badge(containerColor = MaterialTheme.colorScheme.errorContainer) { Text("Dirty", style = MaterialTheme.typography.labelSmall) }
-                        if (isClosed) Badge(containerColor = MaterialTheme.colorScheme.error) { Text("Closed", style = MaterialTheme.typography.labelSmall) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    distance?.let {
+                        Text(" • ", style = MaterialTheme.typography.bodySmall)
+                        Text("${(it/1000).format(1)} km", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                if (aggregate != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        val ratingColor = when {
+                            aggregate.avgCleanliness >= 4.0 -> Color(0xFF2E7D32)
+                            aggregate.avgCleanliness >= 2.5 -> Color(0xFFF57C00)
+                            else -> Color(0xFFD32F2F)
+                        }
+                        Icon(Icons.Default.Star, null, modifier = Modifier.size(14.dp), tint = ratingColor)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = aggregate.avgCleanliness.format(1),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = ratingColor,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        Spacer(Modifier.width(8.dp))
+                        
+                        if (aggregate.isRecentlyVerified(now)) {
+                            Badge(containerColor = Color(0xFF2E7D32)) { Text("Verified", color = Color.White) }
+                        } else if (aggregate.isDirtyNow(now)) {
+                            Badge(containerColor = Color(0xFFD32F2F)) { Text("Dirty", color = Color.White) }
+                        } else if (aggregate.isClosedNow(now)) {
+                            Badge(containerColor = Color.Black) { Text("Closed", color = Color.White) }
+                        }
                     }
                 }
             }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(horizontalAlignment = Alignment.End) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (aggregate?.needsPasscode == true) {
-                            Icon(
-                                imageVector = Icons.Default.VpnKey,
-                                contentDescription = "Passcode",
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.secondary
-                            )
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        if (aggregate != null && aggregate.ratingCount > 0) {
-                            Text(
-                                text = String.format(Locale.US, "%.1f", aggregate.avgCleanliness),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (aggregate.avgCleanliness >= 3.5) Color(0xFF2E7D32) else if (aggregate.avgCleanliness >= 2.5) Color(0xFFF57C00) else MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                    if (aggregate != null && aggregate.ratingCount > 0) {
-                        Text("Rating", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-
-                Spacer(Modifier.width(8.dp))
-
-                val context = LocalContext.current
-                IconButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${item.location.latitude},${item.location.longitude}")).apply {
-                            setPackage("com.google.android.apps.maps")
-                        }
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Navigation, 
-                        contentDescription = "Navigate", 
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
+            
+            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
+fun Double.format(digits: Int) = "%.${digits}f".format(this)
+
+@Composable
+fun StatItem(label: String, count: Int, icon: ImageVector) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        Text(count.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+fun FeatureBadge(icon: ImageVector, label: String, containerColor: Color) {
+    Surface(color = containerColor, shape = MaterialTheme.shapes.small) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+fun FilterToggleRow(label: String, icon: ImageVector, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(24.dp), MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(16.dp))
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RestroomDetailsDialog(viewModel: MapViewModel) {
+    var showFeedbackInputs by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    
+    AlertDialog(
+        onDismissRequest = { viewModel.clearSelectedPlace(); showFeedbackInputs = false },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(viewModel.selectedRestroomName ?: "Restroom", modifier = Modifier.weight(1f))
+                val isFav = viewModel.selectedRestroomId?.let { viewModel.isFavorite(it) } ?: false
+                IconButton(onClick = { viewModel.toggleFavorite() }) {
+                    Icon(
+                        imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = "Toggle Favorite",
+                        tint = if (isFav) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+                viewModel.selectedAggregate?.let { RestroomAggregateSummary(it) }
+                
+                if (showFeedbackInputs) {
+                    HorizontalDivider()
+                    Text("Update Information", style = MaterialTheme.typography.titleSmall)
+                    
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Cleanliness", modifier = Modifier.weight(1f))
+                            Row {
+                                (1..5).forEach { rating ->
+                                    IconButton(onClick = { viewModel.selectedCleanlinessRating = rating }) {
+                                        Icon(
+                                            imageVector = if (viewModel.selectedCleanlinessRating >= rating) Icons.Default.Star else Icons.Default.StarBorder,
+                                            contentDescription = null,
+                                            tint = if (viewModel.selectedCleanlinessRating >= rating) Color(0xFFFBC02D) else Color.Gray
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        OutlinedTextField(
+                            value = viewModel.userNoteUpdate,
+                            onValueChange = { viewModel.userNoteUpdate = it },
+                            label = { Text("Add a note (passcode, etc.)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        FilterToggleRow("Requires Passcode", Icons.Default.Lock, viewModel.needsPasscodeUpdate) { viewModel.needsPasscodeUpdate = it }
+                        FilterToggleRow("Truck Friendly", Icons.Default.LocalShipping, viewModel.isTruckFriendlyUpdate) { viewModel.isTruckFriendlyUpdate = it }
+                        FilterToggleRow("Accessible", Icons.AutoMirrored.Filled.Accessible, viewModel.isAccessibleUpdate) { viewModel.isAccessibleUpdate = it }
+                        FilterToggleRow("Baby Changing", Icons.Default.ChildCare, viewModel.hasBabyChangingUpdate) { viewModel.hasBabyChangingUpdate = it }
+                        FilterToggleRow("Single Stall", Icons.Default.Person, viewModel.isSingleStallUpdate) { viewModel.isSingleStallUpdate = it }
+                        
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = viewModel.markedDirtyUpdate,
+                                onClick = { viewModel.markedDirtyUpdate = !viewModel.markedDirtyUpdate },
+                                label = { Text("Dirty") },
+                                leadingIcon = if (viewModel.markedDirtyUpdate) { { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) } } else null,
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFFD32F2F).copy(alpha = 0.2f))
+                            )
+                            FilterChip(
+                                selected = viewModel.markedClosedUpdate,
+                                onClick = { viewModel.markedClosedUpdate = !viewModel.markedClosedUpdate },
+                                label = { Text("Closed") },
+                                leadingIcon = if (viewModel.markedClosedUpdate) { { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) } } else null,
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color.Black.copy(alpha = 0.2f))
+                            )
+                        }
+                    }
+                    
+                    Button(
+                        onClick = { viewModel.submitFeedback(true); showFeedbackInputs = false },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Submit Feedback")
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.confirmStillClean() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                        contentPadding = PaddingValues(12.dp)
+                    ) {
+                        Icon(Icons.Default.ThumbUp, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("It's Clean!")
+                    }
+                    
+                    OutlinedButton(
+                        onClick = { showFeedbackInputs = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Update Details / Feedback")
+                    }
+
+                    TextButton(
+                        onClick = { viewModel.flagAsIncorrect() },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Not a Restroom")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { 
+                viewModel.selectedRestroomLocation?.let { loc ->
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${loc.latitude},${loc.longitude}")).apply {
+                        setPackage("com.google.android.apps.maps")
+                    }
+                    context.startActivity(intent)
+                }
+            }) { Text("Navigate") }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.clearSelectedPlace() }) { Text("Close") }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RestroomAggregateSummary(aggregate: RestroomAggregate) {
-    val nowMillis = System.currentTimeMillis()
-    val statusChips = remember(aggregate, nowMillis) {
-        buildList {
-            if (aggregate.isRecentlyVerified(nowMillis)) add("Recently verified")
-            if (aggregate.isClosedNow(nowMillis)) add("Closed now")
-            if (aggregate.isDirtyNow(nowMillis)) add("Reported dirty")
+    val now = System.currentTimeMillis()
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val ratingColor = when {
+                aggregate.avgCleanliness >= 4.0 -> Color(0xFF2E7D32)
+                aggregate.avgCleanliness >= 2.5 -> Color(0xFFF57C00)
+                else -> Color(0xFFD32F2F)
+            }
+            Text(
+                text = aggregate.avgCleanliness.format(1),
+                style = MaterialTheme.typography.displaySmall,
+                color = ratingColor,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Cleanliness Score", style = MaterialTheme.typography.labelMedium)
+                Text("Based on ${aggregate.ratingCount} reports", style = MaterialTheme.typography.bodySmall)
+            }
         }
-    }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (statusChips.isNotEmpty()) {
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        if (aggregate.isDirtyNow(now)) {
+            Surface(
+                color = Color(0xFFD32F2F).copy(alpha = 0.1f),
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                statusChips.forEach { label ->
-                    AssistChip(onClick = {}, label = { Text(label) })
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, null, tint = Color(0xFFD32F2F))
+                    Spacer(Modifier.width(12.dp))
+                    Text("Reported dirty recently. Proceed with caution.", style = MaterialTheme.typography.bodyMedium, color = Color(0xFFD32F2F))
                 }
             }
-        } else {
-            Text("No active dirty or closed alerts right now.")
         }
 
-        if (aggregate.ratingCount > 0) {
-            Text("Dirty likelihood: ${aggregate.dirtyLikelihoodPercent()}%")
-            Text(
-                text = "Average cleanliness tendency: ${String.format(Locale.US, "%.1f", aggregate.avgCleanliness)}/5 from ${aggregate.ratingCount} rating${if (aggregate.ratingCount == 1) "" else "s"}.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        } else {
-            Text("No historical cleanliness ratings yet.")
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (aggregate.needsPasscode) FeatureBadge(Icons.Default.Lock, "Code Required", Color.Gray.copy(alpha = 0.1f))
+            if (aggregate.isTruckFriendly) FeatureBadge(Icons.Default.LocalShipping, "Truck Friendly", Color.Blue.copy(alpha = 0.1f))
+            if (aggregate.isAccessible) FeatureBadge(Icons.AutoMirrored.Filled.Accessible, "Accessible", Color.Blue.copy(alpha = 0.1f))
+            if (aggregate.hasBabyChanging) FeatureBadge(Icons.Default.ChildCare, "Changing Table", Color.Magenta.copy(alpha = 0.1f))
+            if (aggregate.isSingleStall) FeatureBadge(Icons.Default.Person, "Single Stall", Color.Cyan.copy(alpha = 0.1f))
         }
+        
+        if (aggregate.note.isNotBlank()) {
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Latest Note", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(aggregate.note, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
 
-        Text(
-            text = "Historical dirty alerts: ${aggregate.dirtyReports} • Historical closed alerts: ${aggregate.closedReports}",
-            style = MaterialTheme.typography.bodySmall
-        )
-        Text(
-            text = "Temporary status alerts expire automatically. Ratings reflect long-term likelihood, not the current moment.",
-            style = MaterialTheme.typography.bodySmall
-        )
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddRestroomDialog(viewModel: MapViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    
+    AlertDialog(
+        onDismissRequest = { viewModel.pendingNewRestroomLocation = null },
+        title = { Text("Add New Restroom") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = viewModel.newRestroomName,
+                    onValueChange = { viewModel.newRestroomName = it },
+                    label = { Text("Name (e.g. Starbucks, Public Park)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = !expanded }
+                ) {
+                    OutlinedTextField(
+                        value = viewModel.newRestroomCategory,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Category") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        viewModel.restroomTypes.forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(type) },
+                                onClick = {
+                                    viewModel.newRestroomCategory = type
+                                    expanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = viewModel.newRestroomNote,
+                    onValueChange = { viewModel.newRestroomNote = it },
+                    label = { Text("Note (optional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text("Features", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                
+                FilterToggleRow("Requires Passcode", Icons.Default.Lock, viewModel.newRestroomNeedsPasscode) { viewModel.newRestroomNeedsPasscode = it }
+                FilterToggleRow("Truck Friendly", Icons.Default.LocalShipping, viewModel.newRestroomIsTruckFriendly) { viewModel.newRestroomIsTruckFriendly = it }
+                FilterToggleRow("Accessible", Icons.AutoMirrored.Filled.Accessible, viewModel.newRestroomIsAccessible) { viewModel.newRestroomIsAccessible = it }
+                FilterToggleRow("Baby Changing", Icons.Default.ChildCare, viewModel.newRestroomHasBabyChanging) { viewModel.newRestroomHasBabyChanging = it }
+                FilterToggleRow("Single Stall", Icons.Default.Person, viewModel.newRestroomIsSingleStall) { viewModel.newRestroomIsSingleStall = it }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { viewModel.saveCustomRestroom() }) {
+                Text("Save Restroom")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.pendingNewRestroomLocation = null }) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdvancedFilterSheet(viewModel: MapViewModel, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Advanced Filters", style = MaterialTheme.typography.titleLarge)
+            FilterToggleRow("Accessible", Icons.AutoMirrored.Filled.Accessible, viewModel.filterAccessible) { viewModel.filterAccessible = it }
+            FilterToggleRow("Baby Changing", Icons.Default.ChildCare, viewModel.filterBabyChanging) { viewModel.filterBabyChanging = it }
+            FilterToggleRow("Single Stall", Icons.Default.Lock, viewModel.filterSingleStall) { viewModel.filterSingleStall = it }
+            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Apply") }
+        }
     }
 }
 
 @Composable
-private fun CleanlinessRatingRow(selectedRating: Int, onRatingSelected: (Int) -> Unit) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        (1..5).forEach { rating ->
-            FilterChip(
-                selected = selectedRating == rating,
-                onClick = { onRatingSelected(rating) },
-                label = { Text(rating.toString()) }
-            )
+private fun LoadingScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            AppLogo(Modifier.padding(bottom = 32.dp))
+            CircularProgressIndicator()
         }
     }
 }

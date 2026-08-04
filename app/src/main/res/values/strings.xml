@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Driver Assist</string>
+    <string name="app_name">Restroom Finder</string>
     <string name="username">Username: </string>
     <string name="name">Name</string>
     <string name="login">Login</string>
