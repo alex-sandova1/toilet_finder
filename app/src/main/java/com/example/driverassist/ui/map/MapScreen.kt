@@ -297,69 +297,71 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
                     )
                 },
                 topBar = {
-                    TopAppBar(
-                        navigationIcon = {
-                            IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
-                                Icon(Icons.Default.Menu, contentDescription = "Open Navigation Drawer")
-                            }
-                        },
-                        title = {
-                            LazyRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                itemsIndexed(viewModel.restroomTypes) { index, type ->
-                                    val selected = viewModel.selectedTypeIndex == index
-                                    FilterChip(
-                                        selected = selected,
-                                        onClick = { 
-                                            viewModel.updateSelectedType(index, placesClient, cameraPositionState.position.target) 
-                                        },
-                                        label = { Text(type) },
-                                        leadingIcon = if (selected) {
-                                            { Icon(Icons.Default.Done, null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
-                                        } else null,
-                                        enabled = !viewModel.isSearching
-                                    )
+                    Column {
+                        TopAppBar(
+                            navigationIcon = {
+                                IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                                    Icon(Icons.Default.Menu, contentDescription = "Open Navigation Drawer")
+                                }
+                            },
+                            title = {
+                                LazyRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    itemsIndexed(viewModel.restroomTypes) { index, type ->
+                                        val selected = viewModel.selectedTypeIndex == index
+                                        FilterChip(
+                                            selected = selected,
+                                            onClick = { 
+                                                viewModel.updateSelectedType(index, placesClient, cameraPositionState.position.target) 
+                                            },
+                                            label = { Text(type) },
+                                            leadingIcon = if (selected) {
+                                                { Icon(Icons.Default.Done, null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                                            } else null,
+                                            enabled = !viewModel.isSearching
+                                        )
+                                    }
+                                }
+                            },
+                            actions = {
+                                if (viewModel.isVerifiedFilterEnabled || viewModel.filterAccessible || viewModel.filterBabyChanging || viewModel.filterSingleStall) {
+                                    IconButton(onClick = {
+                                        viewModel.isVerifiedFilterEnabled = false
+                                        viewModel.filterAccessible = false
+                                        viewModel.filterBabyChanging = false
+                                        viewModel.filterSingleStall = false
+                                    }) {
+                                        Icon(Icons.Default.FilterListOff, contentDescription = "Clear Filters")
+                                    }
                                 }
                             }
-                        },
-                        actions = {
-                            if (viewModel.isVerifiedFilterEnabled || viewModel.filterAccessible || viewModel.filterBabyChanging || viewModel.filterSingleStall) {
-                                IconButton(onClick = {
-                                    viewModel.isVerifiedFilterEnabled = false
-                                    viewModel.filterAccessible = false
-                                    viewModel.filterBabyChanging = false
-                                    viewModel.filterSingleStall = false
-                                }) {
-                                    Icon(Icons.Default.FilterListOff, contentDescription = "Clear Filters")
-                                }
-                            }
-                        }
-                    )
+                        )
 
-                    if (viewModel.userProfile?.isVerifiedUser == true && viewModel.searchHistory.isNotEmpty()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                            tonalElevation = 1.dp,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        if (viewModel.userProfile?.isVerifiedUser == true && viewModel.searchHistory.isNotEmpty()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                                tonalElevation = 1.dp,
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                item {
-                                    Text("Recents:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                }
-                                items(viewModel.searchHistory) { query ->
-                                    AssistChip(
-                                        onClick = { viewModel.searchForBathrooms(placesClient, cameraPositionState.position.target, query) },
-                                        label = { Text(query, style = MaterialTheme.typography.bodySmall) },
-                                        leadingIcon = { Icon(Icons.Default.History, null, modifier = Modifier.size(14.dp)) }
-                                    )
+                                LazyRow(
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    item {
+                                        Text("Recents:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    items(viewModel.searchHistory) { query ->
+                                        AssistChip(
+                                            onClick = { viewModel.searchForBathrooms(placesClient, cameraPositionState.position.target, query) },
+                                            label = { Text(query, style = MaterialTheme.typography.bodySmall) },
+                                            leadingIcon = { Icon(Icons.Default.History, null, modifier = Modifier.size(14.dp)) }
+                                        )
+                                    }
                                 }
                             }
                         }
