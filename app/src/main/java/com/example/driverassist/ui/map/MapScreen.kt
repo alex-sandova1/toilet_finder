@@ -470,7 +470,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
     if (viewModel.showUpgradeDialog) {
         UpgradeDialog(
-            price = viewModel.subscriptionPrice ?: "$5.00/mo",
+            price = viewModel.subscriptionPrice ?: "$4.99/mo",
             onUpgrade = {
                 val activity = context as? Activity
                 if (activity != null) {
