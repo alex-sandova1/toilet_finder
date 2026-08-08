@@ -56,7 +56,7 @@ DriverAssist combines Google Maps, community reporting, and navigation into a si
 
 ### User System
 - **Google Sign-In**: Secure authentication via Firebase
-- **User Profiles**: Free and Verified (Premium $2/mo) tiers with profile persistence
+- **User Profiles**: Free and Verified (Premium $5/mo) tiers with profile persistence
 - **Verified Benefits**: Access to Verified Clean filter (hide dirty restrooms)
 
 ### Offline Support

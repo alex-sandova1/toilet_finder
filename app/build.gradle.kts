@@ -78,4 +78,8 @@ dependencies {
     implementation(libs.androidx.credentials.core)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
+
+    // Play Billing
+    implementation(libs.play.billing)
+    implementation(libs.play.billing.ktx)
 }

@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
@@ -73,7 +74,7 @@ fun LoginScreen(
     val credentialManager = remember { CredentialManager.create(context) }
     
     // Web Client ID from Firebase Console
-    val webClientId = "769881213094-1j1ga27sro61hamdu92j2egn7bil4ke5.apps.googleusercontent.com"
+    val webClientId = stringResource(id = com.example.driverassist.R.string.default_web_client_id)
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -133,7 +134,7 @@ fun LoginScreen(
                     }
                 }
             ) {
-                Text(text = "Sign in with Google")
+                Text(text = stringResource(id = com.example.driverassist.R.string.sign_in_google))
             }
         }
 
@@ -147,10 +148,7 @@ fun LoginScreen(
             onClick = { onLoginSuccess() },
             modifier = Modifier.padding(top = 16.dp)
         ) {
-            Text("Skip Log-In")
+            Text(stringResource(id = com.example.driverassist.R.string.skip_login))
         }
     }
 }
-
-// Helper to fix padding import if needed (oops, I used padding instead of Modifier.padding in the TextButton)
-// Fixed in the final content above: modifier = Modifier.padding(top = 16.dp)

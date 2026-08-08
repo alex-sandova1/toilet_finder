@@ -4,4 +4,7 @@
     <string name="name">Name</string>
     <string name="login">Login</string>
     <string name="password">Password:</string>
+    <string name="default_web_client_id">769881213094-1j1ga27sro61hamdu92j2egn7bil4ke5.apps.googleusercontent.com</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="skip_login">Skip Log-In</string>
 </resources>

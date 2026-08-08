@@ -2,13 +2,13 @@ package com.example.driverassist.ui.map
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,14 +29,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.driverassist.model.CustomRestroom
 import com.example.driverassist.model.RestroomAggregate
@@ -58,7 +55,6 @@ import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
 import com.google.maps.android.compose.*
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
@@ -471,6 +467,50 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
     if (viewModel.isInitialLoading) {
         LoadingScreen()
     }
+
+    if (viewModel.showUpgradeDialog) {
+        UpgradeDialog(
+            price = viewModel.subscriptionPrice ?: "$5.00/mo",
+            onUpgrade = {
+                val activity = context as? Activity
+                if (activity != null) {
+                    viewModel.startUpgradeFlow(activity)
+                }
+                viewModel.showUpgradeDialog = false
+            },
+            onDismiss = { viewModel.showUpgradeDialog = false }
+        )
+    }
+}
+
+@Composable
+fun UpgradeDialog(price: String, onUpgrade: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Verified, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+        title = { Text("Upgrade to Verified User") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Get the most out of Driver Assist with a Verified User subscription.")
+                Spacer(Modifier.height(8.dp))
+                Text("• Access 'Verified Clean' filters", style = MaterialTheme.typography.bodyMedium)
+                Text("• Save unlimited favorites", style = MaterialTheme.typography.bodyMedium)
+                Text("• Help improve the community map", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(16.dp))
+                Text("Price: $price", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onUpgrade) {
+                Text("Upgrade Now")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Not Now")
+            }
+        }
+    )
 }
 
 @Composable

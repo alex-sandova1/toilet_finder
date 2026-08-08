@@ -1,12 +1,14 @@
 package com.example.driverassist.ui.map
 
 import android.util.Log
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.driverassist.data.BillingManager
 import com.example.driverassist.data.RestroomFeedbackRepository
 import com.example.driverassist.data.UserRepository
 import com.example.driverassist.data.local.FavoriteRestroom
@@ -29,9 +31,15 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     private val restroomDao = database.restroomDao()
     private val userRepository = UserRepository()
     private val auth = FirebaseAuth.getInstance()
+    private val billingManager = BillingManager(application, viewModelScope)
 
     val currentUser get() = auth.currentUser
     var userProfile by mutableStateOf<UserProfile?>(null)
+        private set
+
+    var showUpgradeDialog by mutableStateOf(false)
+
+    var subscriptionPrice by mutableStateOf<String?>(null)
         private set
 
     var localOfflineRestrooms by mutableStateOf<List<OfflineRestroom>>(emptyList())
@@ -42,6 +50,25 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
 
     init {
         loadUserProfile()
+        
+        // Observe billing status
+        viewModelScope.launch {
+            billingManager.isVerified.collect { isVerified ->
+                val uid = auth.currentUser?.uid
+                if (uid != null && isVerified && userProfile?.isVerifiedUser == false) {
+                    userRepository.updateVerificationStatus(uid, true)
+                    loadUserProfile() // Refresh local profile
+                }
+            }
+        }
+
+        // Observe subscription price
+        viewModelScope.launch {
+            billingManager.subscriptionPrice.collect { price ->
+                subscriptionPrice = price
+            }
+        }
+
         // Collect local restrooms from Room for offline access
         viewModelScope.launch {
             restroomDao.getAllOfflineRestrooms().collect { localRestrooms ->
@@ -67,6 +94,10 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
                 Log.e("MapViewModel", "Failed to load user profile: ${error.message}", error)
             }
         }
+    }
+
+    fun startUpgradeFlow(activity: Activity) {
+        billingManager.launchUpgradeFlow(activity)
     }
 
     val restroomTypes = listOf(
@@ -249,7 +280,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
         if (userProfile?.isVerifiedUser == true) {
             isVerifiedFilterEnabled = !isVerifiedFilterEnabled
         } else {
-            toastMessage = "Upgrade to Verified User to use this filter!"
+            showUpgradeDialog = true
         }
     }
 
@@ -680,7 +711,7 @@ class MapViewModel(application: android.app.Application) : AndroidViewModel(appl
     // Favorites Logic
     fun toggleFavorite() {
         if (userProfile?.isVerifiedUser != true) {
-            toastMessage = "Upgrade to Verified User to save favorites!"
+            showUpgradeDialog = true
             return
         }
 

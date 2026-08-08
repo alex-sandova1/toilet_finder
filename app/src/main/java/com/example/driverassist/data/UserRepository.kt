@@ -35,4 +35,8 @@ class UserRepository(
             usersCollection.document(uid).update(updates).await()
         }
     }
+
+    suspend fun updateVerificationStatus(uid: String, isVerified: Boolean) {
+        usersCollection.document(uid).update("verifiedUser", isVerified).await()
+    }
 }
